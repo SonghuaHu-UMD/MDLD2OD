@@ -40,6 +40,7 @@ smart_loc = pd.read_pickle(r'F:\Research_Old\Incentrip_research\data\SmartLocati
 smart_loc['BGFIPS'] = smart_loc['BGFIPS'].astype(str).apply(lambda x: x.zfill(12))
 smart_loc = smart_loc[~smart_loc['BGFIPS'].str[0:2].isin(['02', '15', '60', '66', '69', '72', '78'])].reset_index(
     drop=True)
+smart_loc['CBSA_Name'] = smart_loc['CBSA_Name'].str.replace('/', '-')
 # smart_loc.groupby(['CBSA_Name'])['BGFIPS'].count().sort_values(ascending=False)
 msa_pop = smart_loc.drop_duplicates(subset=['CBSA_Name'])[['CBSA_Name', 'CBSA_POP']].sort_values(
     by='CBSA_POP', ascending=False).reset_index(drop=True)
@@ -47,7 +48,7 @@ msa_pop = smart_loc.drop_duplicates(subset=['CBSA_Name'])[['CBSA_Name', 'CBSA_PO
 all_files = glob.glob(data_url + '*DATE_RANGE_START-2024-05-01.csv.gz')
 
 # Loop for each MSA
-for emsa in range(0, 50):
+for emsa in range(45, 50):
     msa_name = msa_pop.loc[emsa, 'CBSA_Name']
     print("------------------- Start processing MSA: %s -----------------" % msa_name)
     need_cbg = list(smart_loc.loc[smart_loc['CBSA_Name'] == msa_name, 'BGFIPS'])
