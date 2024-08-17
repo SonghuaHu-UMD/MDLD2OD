@@ -11,9 +11,15 @@ import mapclassify
 import contextily as ctx
 import yaml
 
+plt.rcParams.update(
+    {'font.size': 15, 'font.family': "serif", 'mathtext.fontset': 'dejavuserif', 'xtick.direction': 'in',
+     'xtick.major.size': 0.5, 'grid.linestyle': "--", 'axes.grid': True, "grid.alpha": 1, "grid.color": "#cccccc",
+     'xtick.minor.size': 1.5, 'xtick.minor.width': 0.5, 'xtick.minor.visible': True, 'xtick.top': True,
+     'ytick.direction': 'in', 'ytick.major.size': 0.5, 'ytick.minor.size': 1.5, 'ytick.minor.width': 0.5,
+     'ytick.minor.visible': True, 'ytick.right': True, 'axes.linewidth': 0.5, 'grid.linewidth': 0.5,
+     'lines.linewidth': 1.5, 'legend.frameon': False, 'savefig.bbox': 'tight', 'savefig.pad_inches': 0.05})
 url_r = r'D:\MDLD_OD\Roadosm\\'
 all_files = glob.glob(url_r + '*.pbf')
-out_files = os.listdir(url_r)
 
 
 def save_settings_yml(filename, assignment_settings, mode_types, demand_periods, demand_files, subarea, link_types,
@@ -47,7 +53,7 @@ msa_pop = smart_loc.drop_duplicates(subset=['CBSA_Name', 'CBSA'])[['CBSA_Name', 
 
 # Link OD data to road network
 for ef in all_files:
-    # ef=all_files[-1]
+    # ef=all_files[-13]
     e_cbsa = ef.split('\\')[-1].split('.')[0]
     e_name = msa_pop.loc[msa_pop['CBSA'] == e_cbsa, 'CBSA_Name'].values[0]
     print('Start processing %s--------------' % e_name)
@@ -74,7 +80,7 @@ for ef in all_files:
     od_raw = pd.read_csv('D:\MDLD_OD\MDLDod\data\\%s_OD.csv' % e_name, index_col=0)
     od_raw['destination'] = od_raw['destination'].astype(str).apply(lambda x: x.zfill(12))
     od_raw['origin'] = od_raw['origin'].astype(str).apply(lambda x: x.zfill(12))
-    # od_raw['monthly_total'] = od_raw['monthly_total'] / (31 * 4)
+    od_raw['monthly_total'] = (od_raw['monthly_total'] / 31) * 0.1
     # od_raw = od_raw[od_raw['monthly_total'] > 0.1].reset_index(drop=True)
     cbg_list = set(od_raw['destination']).union(set(od_raw['origin']))
     print('Number of zones: %s' % len(cbg_list))
@@ -146,22 +152,22 @@ for ef in all_files:
 
     # Run assignment
     os.chdir(r"D:\MDLD_OD\Simulation\%s" % e_cbsa)
-    subprocess.call([r"D:\MDLD_OD\Simulation\%s\DTALite_230915.exe" % e_cbsa])
+    subprocess.call([r"D:\MDLD_OD\Simulation\%s\DTALite_0602_2024.exe" % e_cbsa])
 
     # Plot link performance
-    assign_all = pd.read_csv(r'D:\MDLD_OD\Simulation\%s\link_performance_s0_25nb.csv' % e_cbsa)
-    assign_all['volume'] = assign_all['volume'].fillna(0)
-    binning = mapclassify.NaturalBreaks(assign_all['volume'], k=5)  # NaturalBreaks
-    assign_all['cut_jenks'] = (binning.yb + 1)
-    aadt = link.merge(assign_all[['from_node_id', 'to_node_id', 'cut_jenks', 'volume']],
+    assign_all = pd.read_csv(r'D:\MDLD_OD\Simulation\%s\link_performance.csv' % e_cbsa)
+    assign_all['vehicle_volume'] = assign_all['vehicle_volume'].fillna(0)
+    binning = mapclassify.NaturalBreaks(assign_all['vehicle_volume'], k=5)  # NaturalBreaks
+    assign_all['cut_jenks'] = (binning.yb + 1) * 0.5
+    aadt = link.merge(assign_all[['from_node_id', 'to_node_id', 'cut_jenks', 'vehicle_volume', 'speed_kmph']],
                       on=['from_node_id', 'to_node_id'], how='left')
 
     fig, ax = plt.subplots(figsize=(9, 7))
-    aadt.plot(column='volume', cmap='RdYlGn_r', scheme="natural_breaks", k=5, lw=aadt['cut_jenks'], ax=ax,
-              alpha=0.6, legend=True, legend_kwds={"fmt": "{:.0f}", 'ncol': 1, 'loc': 'upper left'})
+    aadt.plot(column='vehicle_volume', cmap='RdYlGn_r', scheme="natural_breaks", k=5, lw=aadt['cut_jenks'], ax=ax,
+              alpha=0.6, legend=True, legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
     ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
     # plt.subplots_adjust(top=0.99, bottom=0.003, left=0.0, right=1.0, hspace=0.0, wspace=0.0)
     plt.tight_layout()
     plt.axis('off')
-    plt.savefig(r'D:\MDLD_OD\Simulation\%s\assigned_volume.pdf' % e_cbsa)
+    plt.savefig(r'D:\MDLD_OD\Simulation\%s\assigned_traffic.pdf' % e_cbsa)
     # plt.close()

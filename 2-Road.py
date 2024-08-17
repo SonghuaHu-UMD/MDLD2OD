@@ -1,10 +1,7 @@
 import glob
 import osm2gmns as og
 import pandas as pd
-import numpy as np
-import matplotlib
 import geopandas as gpd
-import matplotlib.pyplot as plt
 import os
 
 url_r = r'D:\MDLD_OD\Roadosm\\'
