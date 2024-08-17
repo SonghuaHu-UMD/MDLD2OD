@@ -1,7 +1,6 @@
 import glob
 import pandas as pd
 import numpy as np
-import matplotlib
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import os
@@ -10,10 +9,21 @@ import shutil
 import subprocess
 import mapclassify
 import contextily as ctx
+import yaml
 
 url_r = r'D:\MDLD_OD\Roadosm\\'
 all_files = glob.glob(url_r + '*.pbf')
 out_files = os.listdir(url_r)
+
+
+def save_settings_yml(filename, assignment_settings, mode_types, demand_periods, demand_files, subarea, link_types,
+                      departure_time_profiles):
+    settings = {'assignment': assignment_settings, 'mode_types': mode_types, 'demand_periods': demand_periods,
+                'demand_files': demand_files, 'subarea': subarea, 'link_types': link_types,
+                'departure_time_profile': departure_time_profiles}
+    with open(filename, 'w') as file:
+        yaml.dump(settings, file)
+
 
 # Read MSA
 MSA_geo = gpd.GeoDataFrame.from_file(r'D:\Google_Review\Parking\tl_2019_us_cbsa\tl_2019_us_cbsa.shp')
@@ -49,19 +59,18 @@ for ef in all_files:
     link = link[link['link_type_name'].isin(
         ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'connector'])].reset_index(drop=True)
 
-    # check link and node: all link's node should be found in node.csv
+    # All link's node should be found in node.csv
     link_node = set(list(set(link['from_node_id'])) + list(set(link['to_node_id'])))
     node_node = set(node['node_id'])
-    print('Pct of nodes in links: %s' % (len(link_node & node_node) / len(link_node)))
+    # print('Pct of nodes in links: %s' % (len(link_node & node_node) / len(link_node)))
     node = node[node['node_id'].isin(link_node)].reset_index(drop=True)
-    # check link type
-    link_type = link.groupby(['link_type', 'link_type_name'])[['free_speed', 'capacity']].mean().reset_index()
 
+    # To geopandas
     node = gpd.GeoDataFrame(node, geometry=gpd.points_from_xy(node.x_coord, node.y_coord), crs="EPSG:4326")
     link["geometry"] = gpd.GeoSeries.from_wkt(link["geometry"])
     link = gpd.GeoDataFrame(link, geometry='geometry', crs='EPSG:4326')
 
-    # read od we need
+    # Read od we need
     od_raw = pd.read_csv('D:\MDLD_OD\MDLDod\data\\%s_OD.csv' % e_name, index_col=0)
     od_raw['destination'] = od_raw['destination'].astype(str).apply(lambda x: x.zfill(12))
     od_raw['origin'] = od_raw['origin'].astype(str).apply(lambda x: x.zfill(12))
@@ -70,17 +79,17 @@ for ef in all_files:
     cbg_list = set(od_raw['destination']).union(set(od_raw['origin']))
     print('Number of zones: %s' % len(cbg_list))
 
-    # change zone id
+    # Change zone id from CBFIPS to int
     zone_ids = pd.DataFrame({'destination': list(cbg_list), 'd_zone_id': range(0, len(cbg_list))})
     od_raw = od_raw.merge(zone_ids, on='destination')
     zone_ids.columns = ['origin', 'o_zone_id']
     od_raw = od_raw.merge(zone_ids, on='origin')
     od_raw = od_raw.drop(['destination', 'origin'], axis=1)
+    od_raw.columns = ['volume', 'd_zone_id', 'o_zone_id']
 
+    # Node and CBG join: assign zone id (CBG) to node; connect to link with the highest class
     cbg_need = CBG_geo[CBG_geo['BGFIPS'].isin(cbg_list)].reset_index(drop=True)
     cbg_need = cbg_need.to_crs('EPSG:4326')
-
-    # node and CBG join: assign zone id (CBG) to node; connect to link with the highest class
     SInBG = gpd.sjoin(node, cbg_need, how='inner', predicate='within').reset_index(drop=True)
     SInBG_index = SInBG[['node_id', 'BGFIPS']]
     node_speed = link.groupby('from_node_id')[['free_speed', 'capacity']].mean().reset_index()
@@ -97,6 +106,7 @@ for ef in all_files:
     node = node.merge(zone_ids, on='BGFIPS', how='left')
     node = node.drop('BGFIPS', axis=1)
 
+    ## Plot nodes and links
     # fig, ax = plt.subplots(figsize=(9, 7))
     # link.plot(ax=ax, lw=0.2, color='gray', alpha=0.5)
     # msa_need.boundary.plot(ax=ax, color='royalblue')
@@ -105,26 +115,32 @@ for ef in all_files:
     # plt.tight_layout()
     # plt.show()
 
-    # output
+    # Generate setting for DTALite
+    assignment_settings = {'number_of_iterations': 20, 'route_output': 0, 'simulation_output': 0,
+                           'number_of_cpu_processors': 6, 'length_unit': 'meter', 'speed_unit': 'kmh',
+                           'UE_convergence_percentage': 0.001, 'odme_activate': 0}
+    mode_types = [{'mode_type': 'auto', 'vot': 10, 'person_occupancy': 1, 'pce': 1}]
+    demand_periods = [{'period': 'AM', 'time_period': '0700_0800'}]
+    demand_files = [{'file_sequence_no': 1, 'file_name': 'demand.csv', 'demand_period': 'am', 'mode_type': 'auto',
+                     'format_type': 'column', 'scale_factor': 1, 'departure_time_profile_no': 1}]
+    subarea = [{'activate': 0, 'subarea_geometry': 'POLYGON ((-180 -90, 180 -90, 180 90, -180 90,-180 -90))'}]
+    departure_time_profiles = [
+        {'departure_time_profile_no': 1, 'time_period': '0700_0800', 'T0420': 0.005002, 'T0425': 0.005020,
+         'T0430': 0.005002, 'T0435': 0.005207, 'T0440': 0.005207, 'T0445': 0.005207, 'T0450': 0.005677,
+         'T0455': 0.005677, 'T0460': 0.005677, 'T0465': 0.005994, 'T0470': 0.005994, 'T0475': 0.005994,
+         'T0480': 0.006018}]
+    link_type = link.groupby(['link_type', 'link_type_name'])[['free_speed', 'capacity']].mean().reset_index()
+    link_type['traffic_flow_model'] = ['kw', 'spatial_queue', 'spatial_queue', 'point_queue', 'point_queue']
+    link_type.columns = ['link_type', 'link_type_name', 'free_speed_auto', 'capacity_auto', 'traffic_flow_model']
+    link_types = link_type.to_dict(orient='records')
+
+    # Output
     Path(r"D:\MDLD_OD\Simulation\%s" % e_cbsa).mkdir(parents=True, exist_ok=True)
-    shutil.copy2(r'D:\MDLD_OD\DTALite_230915.exe', r"D:\MDLD_OD\Simulation\%s" % e_cbsa)
-
-    # Generate demand period
-    t_p = 'am'
-    demand_period = pd.DataFrame(
-        {'first_column': [0], "demand_period_id": 1, "demand_period": t_p, "notes": 'weekday',
-         "time_period": '0600_0900', "peak_time": '0830'})
-    demand_period.to_csv(r"D:\MDLD_OD\Simulation\%s\demand_period.csv" % e_cbsa, index=False)
-    demand_file_list = pd.DataFrame(
-        {'first_column': [0], "file_sequence_no": 1, "scenario_index_vector": 0, "file_name": "demand.csv",
-         "demand_period": t_p, "mode_type": 'auto', "format_type": "column", "scale_factor": 1,
-         "departure_time_profile_no": 1})
-    demand_file_list.to_csv(r"D:\MDLD_OD\Simulation\%s\demand_file_list.csv" % e_cbsa, index=False)
-
-    # demand = od_raw[od_raw['monthly_total'] > 1].reset_index(drop=True)
-    od_raw.columns = ['volume', 'd_zone_id', 'o_zone_id']
+    # shutil.copy2(r'D:\MDLD_OD\DTALite_230915.exe', r"D:\MDLD_OD\Simulation\%s" % e_cbsa)
+    shutil.copy2(r'D:\MDLD_OD\DTALite_0602_2024.exe', r"D:\MDLD_OD\Simulation\%s" % e_cbsa)
+    save_settings_yml(r"D:\MDLD_OD\Simulation\%s\settings.yml" % e_cbsa, assignment_settings, mode_types,
+                      demand_periods, demand_files, subarea, link_types, departure_time_profiles)
     od_raw[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"D:\MDLD_OD\Simulation\%s\demand.csv" % e_cbsa, index=False)
-
     node.to_csv(r"D:\MDLD_OD\Simulation\%s\node.csv" % e_cbsa, index=False)
     link.to_csv(r"D:\MDLD_OD\Simulation\%s\link.csv" % e_cbsa, index=False)
 
