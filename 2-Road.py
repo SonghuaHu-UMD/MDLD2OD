@@ -52,6 +52,7 @@ osm_url.to_csv(r'D:\MDLD_OD\Others\osm_url.csv')
 
 # Generate road network from osm files
 for ef in all_files:
+    # ef=all_files[0]
     e_cbsa = ef.split('\\')[-1].split('.')[0]
     if e_cbsa + '.pbf_link.csv' not in out_files:
         print('Start processing %s--------------' % e_cbsa)
@@ -62,46 +63,3 @@ for ef in all_files:
         og.outputNetToCSV(net, output_folder=url_r, prefix=ef + '_')
     else:
         print('%s already exist--------------' % e_cbsa)
-
-# Link OD data to road network
-for ef in all_files:
-    # ef=all_files[0]
-    e_cbsa = ef.split('\\')[-1].split('.')[0]
-    e_name = msa_pop.loc[msa_pop['CBSA'] == e_cbsa, 'CBSA_Name'].values[0]
-    print('Start processing %s--------------' % e_name)
-    msa_need = MSA_geo[MSA_geo['CBSAFP'] == e_cbsa]
-    msa_need = msa_need.to_crs('EPSG:4326')
-
-    node = pd.read_csv(url_r + e_cbsa + '.pbf_node.csv')
-    link = pd.read_csv(url_r + e_cbsa + '.pbf_link.csv')
-    node = gpd.GeoDataFrame(node, geometry=gpd.points_from_xy(node.x_coord, node.y_coord),
-                            crs="EPSG:4326")
-    link["geometry"] = gpd.GeoSeries.from_wkt(link["geometry"])
-    link = gpd.GeoDataFrame(link, geometry='geometry', crs='EPSG:4326')
-
-    # fig, ax = plt.subplots(figsize=(12, 8))
-    # # node.plot(ax=ax, markersize=1, color='k', alpha=0.5)
-    # link.plot(ax=ax, lw=1, color='g', alpha=0.5)
-    # msa_need.boundary.plot(ax=ax, color='red')
-    # plt.axis('off')
-    # plt.tight_layout()
-
-    # check link and node: all link's node should be found in node.csv
-    link_node = set(list(set(link['from_node_id'])) + list(set(link['to_node_id'])))
-    node_node = set(node['node_id'])
-    print('Pct of nodes in links: %s' % (len(link_node & node_node) / len(link_node)))
-    node = node[node['node_id'].isin(link_node)].reset_index(drop=True)
-    # check link type
-    link_type = link.groupby(['link_type', 'link_type_name'])[['free_speed', 'capacity']].mean().reset_index()
-
-    # read od we need
-    od_raw = pd.read_csv('D:\MDLD_OD\MDLDod\data\\%s_OD.csv' % e_name, index_col=0)
-    od_raw['destination'] = od_raw['destination'].astype(str).apply(lambda x: x.zfill(12))
-    od_raw['origin'] = od_raw['origin'].astype(str).apply(lambda x: x.zfill(12))
-    cbg_list = set(od_raw['destination']).union(set(od_raw['origin']))
-    print('Number of zones: %s' % len(cbg_list))
-
-    cbg_need = CBG_geo[CBG_geo['BGFIPS'].isin(cbg_list)].reset_index(drop=True)
-
-    # node and CBG join: assign zone id (CBG) to node
-    SInBG = gpd.sjoin(node, cbg_need, how='inner', op='within').reset_index(drop=True)
