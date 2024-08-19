@@ -3,6 +3,8 @@ import osm2gmns as og
 import pandas as pd
 import geopandas as gpd
 import os
+import fiona
+from tqdm import tqdm
 
 url_r = r'D:\MDLD_OD\Roadosm\\'
 all_files = glob.glob(url_r + '*.pbf')
@@ -43,8 +45,8 @@ for e_name in set(msa_pop.head(50)['CBSA_Name']):
     url_bbk = r'https://extract.bbbike.org/?sw_lng=%s&sw_lat=%s&ne_lng=%s&ne_lat=%s&format=osm.pbf&coords=%s&city=%s' % (
         msa_need.bounds.values[0][0], msa_need.bounds.values[0][1], msa_need.bounds.values[0][2],
         msa_need.bounds.values[0][3], corrd['xy'].str.cat(sep='%7C'), msa_cbsa)
-    osm_url.append([e_name, msa_cbsa, url_bbk])
-osm_url = pd.DataFrame(osm_url, columns=['name', 'cbsa', 'url'])
+    osm_url.append([e_name, msa_cbsa, url_bbk, msa_need.geometry.convex_hull.values[0]])
+osm_url = pd.DataFrame(osm_url, columns=['name', 'cbsa', 'url', 'geometry'])
 osm_url.to_csv(r'D:\MDLD_OD\Others\osm_url.csv')
 
 # Generate road network from osm files
@@ -60,3 +62,21 @@ for ef in all_files:
         og.outputNetToCSV(net, output_folder=url_r, prefix=ef + '_')
     else:
         print('%s already exist--------------' % e_cbsa)
+
+# Connect with AADT
+msa_geo50 = MSA_geo[MSA_geo['CBSAFP'].isin(set(msa_pop.head(50)['CBSA']))]
+msa_geo50 = msa_geo50.to_crs('EPSG:4326')
+layers = fiona.listlayers(r'D:\MDLD_OD\Volume\HPMS_2020.gdb')
+# road_geo50s = pd.DataFrame()
+for e_layer in tqdm(layers):
+    print(e_layer)
+    # e_layer = layers[1]
+    shp_layer = gpd.read_file(r'D:\MDLD_OD\Volume\HPMS_2020.gdb', layer=e_layer)
+    road_geo50 = gpd.sjoin(shp_layer, msa_geo50, how='inner', predicate='intersects')
+    road_geo50 = road_geo50[['State_Code', 'FACILITY_TYPE', 'ACCESS_CONTROL', 'THROUGH_LANES', 'TURN_LANES_R',
+                             'TURN_LANES_L', 'SPEED_LIMIT', 'AADT', 'K_Factor', 'Dir_Factor', 'FUTURE_AADT',
+                             'LANE_WIDTH', 'Shape_Length', 'geometry', 'CSAFP', 'CBSAFP', 'NAMELSAD', 'LSAD']]
+    road_geo50.to_file(r'D:\MDLD_OD\Volume\AADT\road_%s.shp' % e_layer)
+    # road_geo50s = pd.concat([road_geo50s, road_geo50], axis=0)
+# road_geo50s.to_file(r'D:\MDLD_OD\Volume\road_geo50s.shp')
+# road_geo50s.to_pickle(r'D:\MDLD_OD\Volume\road_geo50s.pkl')

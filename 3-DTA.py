@@ -53,7 +53,7 @@ msa_pop = smart_loc.drop_duplicates(subset=['CBSA_Name', 'CBSA'])[['CBSA_Name', 
 
 # Link OD data to road network
 for ef in all_files:
-    # ef=all_files[-13]
+    # ef=all_files[-1]
     e_cbsa = ef.split('\\')[-1].split('.')[0]
     e_name = msa_pop.loc[msa_pop['CBSA'] == e_cbsa, 'CBSA_Name'].values[0]
     print('Start processing %s--------------' % e_name)

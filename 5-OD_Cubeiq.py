@@ -61,6 +61,12 @@ CBG_geo = gpd.GeoDataFrame.from_file(
     r'G:\Data\Dewey\SAFEGRAPH\Open Census Data\Census Website\2019\nhgis0011_shape\\US_blck_grp_2019_84.shp')
 CBG_geo['BGFIPS'] = CBG_geo['GEOID']
 CBG_geo = CBG_geo[~CBG_geo['GISJOIN'].str[1:3].isin(un_st)].reset_index(drop=True)
+# Read State
+state = pd.read_csv(r'D:\MDLD_OD\Others\us-state-ansi-fips.csv')
+state['st'] = state[' st'].astype(str).apply(lambda x: x.zfill(2))
+state['stusps'] = state[' stusps'] + '.'
+state['stusps'] = state['stusps'].str.replace(' ', '')
+
 # Read CBG-MSA
 smart_loc = pd.read_pickle(r'F:\Research_Old\Incentrip_research\data\SmartLocationDatabaseV3\SmartLocationDatabase.pkl')
 smart_loc['BGFIPS'] = smart_loc['BGFIPS'].astype(str).apply(lambda x: x.zfill(12))
@@ -72,73 +78,29 @@ msa_pop = smart_loc.drop_duplicates(subset=['CBSA_Name', 'CBSA'])[['CBSA_Name', 
 
 # Generate OD
 # all_files = glob.glob(data_url + '*DATE_RANGE_START-2019-05-01.csv.gz')
-all_files = glob.glob(
-    r'G:\Data\SafeGraph\Neighbourhood Patterns\neighborhood-patterns\2021\07\07\release-2021-07-01\neighborhood_patterns\y=2019\m=5\*.csv.gz')
-emsa = 44
+all_files = [r'D:\MDLD_OD\Others\19100_20220408.csv', ]
+emsa = 3
 msa_name = msa_pop.loc[emsa, 'CBSA_Name']
 print("------------------- Start processing MSA: %s -----------------" % msa_name)
 need_cbg = list(smart_loc.loc[smart_loc['CBSA_Name'] == msa_name, 'BGFIPS'])
 od_flows = pd.DataFrame()
 for file in tqdm(all_files):
     # Read OD flow: monthly
-    ng_pattern = pd.read_csv(file)
-    ng_pattern.columns = ng_pattern.columns.str.upper()
-    ng_pattern = ng_pattern.dropna(subset=['AREA']).reset_index(drop=True)
-    ng_pattern = ng_pattern[~ng_pattern['AREA'].astype(str).str.contains('[A-Za-z]')].reset_index(drop=True)
-    ng_pattern['AREA'] = ng_pattern['AREA'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
-    ng_pattern = ng_pattern[(ng_pattern['AREA'].isin(need_cbg))].reset_index(drop=True)
-
-    # Get monthly OD flow
-    c_area = 'DEVICE_HOME_AREAS'
-    ng_pattern[c_area] = ng_pattern[c_area].apply(ast.literal_eval).reset_index(drop=True)
-    d_explode = pd.DataFrame([*ng_pattern[c_area]], ng_pattern.index).stack() \
-        .rename_axis([None, 'Origin']).reset_index(1, name='Flow')
-    od_flow = ng_pattern[['AREA']].join(d_explode)
-    od_flow = od_flow.dropna(subset=['Origin']).reset_index(drop=True)
-    od_flow = od_flow[~od_flow['Origin'].astype(str).str.contains('[A-Za-z]')].reset_index(drop=True)
-    od_flow['Origin'] = od_flow['Origin'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
-    od_flow = od_flow[(od_flow['Origin'].isin(need_cbg))].reset_index(drop=True)
+    ng_pattern = pd.read_csv(file, index_col=0)
+    replace_s = pd.Series(state.st.values, index=state.stusps).to_dict()
+    replace_s['US.'] = ''
+    replace_s['\.'] = ''
+    ng_pattern['start_block_group_id'] = ng_pattern['start_block_group_id'].replace(replace_s, regex=True)
+    ng_pattern['end_block_group_id'] = ng_pattern['end_block_group_id'].replace(replace_s, regex=True)
+    # ng_pattern = ng_pattern[ng_pattern['provider_id'] == 190199]
+    ng_pattern = ng_pattern[ng_pattern['hour'] == 9]
+    od_flow = ng_pattern[(ng_pattern['start_block_group_id'].isin(need_cbg)) & (
+        ng_pattern['end_block_group_id'].isin(need_cbg))].reset_index(drop=True)
+    od_flow = od_flow[['end_block_group_id', 'start_block_group_id', 'total_trips']]
     od_flows = pd.concat([od_flows, od_flow])
 
 od_flows.columns = ['destination', 'origin', 'monthly_total']
-
-# Weight by sampling rate and mode share
-# Connect with sampling rate
-device_ct = pd.read_csv(
-    r'G:\Data\SafeGraph\Neighbourhood Patterns\neighborhood-patterns\2021\07\07\release-2021-07-01\neighborhood_home_panel_summary\y=2019\m=5\part-00000-tid-2482439374444164190-4164c5ab-ac8c-4eef-ad65-69b385c1c7ee-306196-1-c000.csv')
-device_ct['AREA'] = device_ct['census_block_group']
-device_ct = device_ct.dropna(subset=['AREA']).reset_index(drop=True)
-device_ct = device_ct[~device_ct['AREA'].astype(str).str.contains('[A-Za-z]')].reset_index(drop=True)
-device_ct['AREA'] = device_ct['AREA'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
-device_ct = device_ct[(device_ct['AREA'].isin(need_cbg))].reset_index(drop=True)
-device_ct = device_ct[['AREA', 'number_devices_residing']]
-total_pop = smart_loc[['BGFIPS', 'TotPop']]
-device_ct.columns = ['BGFIPS', 'number_devices_residing']
-device_ct = device_ct.merge(total_pop, how='left', on='BGFIPS')
-# plt.plot(device_ct['number_devices_residing'], device_ct['TotPop'], 'o')
-device_ct['pop_wt'] = device_ct['number_devices_residing'] / device_ct['TotPop']
-device_ct = device_ct[['BGFIPS', 'pop_wt']]
-device_ct.columns = ['destination', 'destination_pop_wt']
-od_flows = od_flows.merge(device_ct, on='destination')
-device_ct.columns = ['origin', 'origin_pop_wt']
-od_flows = od_flows.merge(device_ct, on='origin')
-
-# Connect with mode share
-CBG_features = pd.read_csv(r'F:\Research_Old\COVID19-Socio\Data\CBG_COVID_19.csv', index_col=0)
-CBG_features['BGFIPS'] = CBG_features['BGFIPS'].astype(str).apply(lambda x: x.zfill(12))
-CBG_features['Driving_R'] = (CBG_features['Drive_alone_R'] + CBG_features['Carpool_R'] + CBG_features[
-    'Taxicab_R']) / 100
-CBG_features = CBG_features[['BGFIPS', 'Driving_R']]
-CBG_features.columns = ['destination', 'destination_drive']
-od_flows = od_flows.merge(CBG_features, on='destination')
-CBG_features.columns = ['origin', 'origin_drive']
-od_flows = od_flows.merge(CBG_features, on='origin')
-od_flows['monthly_total'] = 2 * od_flows['monthly_total'] / (od_flows['destination_pop_wt'] + od_flows['origin_pop_wt'])
-od_flows['monthly_total'] = od_flows['monthly_total'] * (od_flows['destination_drive'] + od_flows['origin_drive']) / 2
 od_flows[['destination', 'origin', 'monthly_total']].to_csv(r'D:\MDLD_OD\Test\MDLDod\data\%s_OD.csv' % msa_name)
-
-# Link sensor to road network
-
 
 # Link OD data to road network
 e_cbsa = msa_pop.loc[emsa, 'CBSA']
@@ -167,7 +129,7 @@ link = gpd.GeoDataFrame(link, geometry='geometry', crs='EPSG:4326')
 od_raw = pd.read_csv('D:\MDLD_OD\Test\MDLDod\data\\%s_OD.csv' % e_name, index_col=0)
 od_raw['destination'] = od_raw['destination'].astype(str).apply(lambda x: x.zfill(12))
 od_raw['origin'] = od_raw['origin'].astype(str).apply(lambda x: x.zfill(12))
-od_raw['monthly_total'] = (od_raw['monthly_total'] / 31) * 0.1
+# od_raw['monthly_total'] = (od_raw['monthly_total'] / 31) * 0.1
 # od_raw = od_raw[od_raw['monthly_total'] > 0.1].reset_index(drop=True)
 cbg_list = set(od_raw['destination']).union(set(od_raw['origin']))
 print('Number of zones: %s' % len(cbg_list))
