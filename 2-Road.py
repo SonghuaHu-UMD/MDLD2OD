@@ -68,14 +68,22 @@ msa_geo50 = MSA_geo[MSA_geo['CBSAFP'].isin(set(msa_pop.head(50)['CBSA']))]
 msa_geo50 = msa_geo50.to_crs('EPSG:4326')
 layers = fiona.listlayers(r'D:\MDLD_OD\Volume\HPMS_2020.gdb')
 # road_geo50s = pd.DataFrame()
-for e_layer in tqdm(layers):
+for e_layer in tqdm(layers[45:]):
     print(e_layer)
     # e_layer = layers[1]
     shp_layer = gpd.read_file(r'D:\MDLD_OD\Volume\HPMS_2020.gdb', layer=e_layer)
     road_geo50 = gpd.sjoin(shp_layer, msa_geo50, how='inner', predicate='intersects')
-    road_geo50 = road_geo50[['State_Code', 'FACILITY_TYPE', 'ACCESS_CONTROL', 'THROUGH_LANES', 'TURN_LANES_R',
-                             'TURN_LANES_L', 'SPEED_LIMIT', 'AADT', 'K_Factor', 'Dir_Factor', 'FUTURE_AADT',
-                             'LANE_WIDTH', 'Shape_Length', 'geometry', 'CSAFP', 'CBSAFP', 'NAMELSAD', 'LSAD']]
+    try:
+        road_geo50 = road_geo50[['State_Code', 'FACILITY_TYPE', 'ACCESS_CONTROL', 'THROUGH_LANES', 'TURN_LANES_R',
+                                 'TURN_LANES_L', 'SPEED_LIMIT', 'AADT', 'K_Factor', 'Dir_Factor', 'FUTURE_AADT',
+                                 'LANE_WIDTH', 'Shape_Length', 'geometry', 'CSAFP', 'CBSAFP', 'NAMELSAD', 'LSAD']]
+    except:
+        road_geo50 = road_geo50[['State_Code', 'Facility_Type', 'Access_Control', 'Through_Lanes', 'Turn_Lanes_R',
+                                 'Turn_Lanes_L', 'Speed_Limit', 'AADT', 'K_Factor', 'Dir_Factor', 'Future_AADT',
+                                 'Lane_Width', 'Shape_Length', 'geometry', 'CSAFP', 'CBSAFP', 'NAMELSAD', 'LSAD']]
+        road_geo50.columns = ['State_Code', 'FACILITY_TYPE', 'ACCESS_CONTROL', 'THROUGH_LANES', 'TURN_LANES_R',
+                              'TURN_LANES_L', 'SPEED_LIMIT', 'AADT', 'K_Factor', 'Dir_Factor', 'FUTURE_AADT',
+                              'LANE_WIDTH', 'Shape_Length', 'geometry', 'CSAFP', 'CBSAFP', 'NAMELSAD', 'LSAD']
     road_geo50.to_file(r'D:\MDLD_OD\Volume\AADT\road_%s.shp' % e_layer)
     # road_geo50s = pd.concat([road_geo50s, road_geo50], axis=0)
 # road_geo50s.to_file(r'D:\MDLD_OD\Volume\road_geo50s.shp')
