@@ -18,9 +18,10 @@ osm_url = []
 for e_name in set(city_list['Name']):
     # e_name = 'New York-Newark-Jersey City, NY-NJ-PA'
     node = city_list.loc[city_list['Name'] == e_name, :].reset_index(drop=True)
+
     node = gpd.GeoDataFrame(node, geometry=gpd.points_from_xy(node.Longitude, node.Latitude), crs="EPSG:4326")
     node = node.to_crs("EPSG:3857")
-    node['geometry'] = node['geometry'].buffer(200000, cap_style='square').to_crs("EPSG:4326")
+    node['geometry'] = node['geometry'].buffer(100000, cap_style='square').to_crs("EPSG:4326")
 
     bbox = list(node.bounds[['miny', 'minx', 'maxy', 'maxx']].values[0])  # min lat, min long, max lat, max long
     corrd = node.geometry.convex_hull.get_coordinates().reset_index(drop=True)
@@ -30,9 +31,11 @@ for e_name in set(city_list['Name']):
     url_bbk = r'https://extract.bbbike.org/?sw_lng=%s&sw_lat=%s&ne_lng=%s&ne_lat=%s&format=osm.pbf&coords=%s&city=%s' % (
         node.bounds.values[0][0], node.bounds.values[0][1], node.bounds.values[0][2],
         node.bounds.values[0][3], corrd['xy'].str.cat(sep='%7C'), e_name)
-    osm_url.append([e_name, corrd, url_bbk, node.geometry.convex_hull.values[0]])
-osm_url = pd.DataFrame(osm_url, columns=['name', 'cbsa', 'url', 'geometry'])
+    osm_url.append([e_name, node['Population'].values[0], url_bbk, node.geometry.convex_hull.values[0]])
+osm_url = pd.DataFrame(osm_url, columns=['name', 'population', 'url', 'geometry'])
 osm_url.to_csv(r'D:\MDLD_OD\Netmob\osm_url_netmob.csv')
+osm_url_gpd = gpd.GeoDataFrame(osm_url)
+osm_url_gpd.to_file(r'D:\MDLD_OD\Netmob\osm_url_netmob.shp')
 
 # Generate road network from osm files
 all_files = glob.glob(url_r + '*.pbf')
