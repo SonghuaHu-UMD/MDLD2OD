@@ -35,21 +35,25 @@ def save_settings_yml(filename, assignment_settings, mode_types, demand_periods,
         yaml.dump(settings, file)
 
 
-# Get the UTM code
-def convert_wgs_to_utm(lon, lat):
-    utm_band = str((math.floor((lon + 180) / 6) % 60) + 1)
-    if len(utm_band) == 1:
-        utm_band = '0' + utm_band
-    if lat >= 0:
-        epsg_code = '326' + utm_band  # lat>0: N;
-    else:
-        epsg_code = '327' + utm_band
-    return epsg_code
+def plot_od(demand0, boundary_plot, plot_name, o_x, o_y, d_x, d_y):
+    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(10, 8))
+    boundary_plot.boundary.plot(ax=ax, color='gray', lw=0.2)
+    for kk in range(0, len(demand0)):
+        ax.annotate('', xy=(demand0.loc[kk, o_x], demand0.loc[kk, o_y]),
+                    xytext=(demand0.loc[kk, d_x], demand0.loc[kk, d_y]),
+                    arrowprops={'arrowstyle': '->', 'lw': 5 * demand0.loc[kk, plot_name] / max(demand0[plot_name]),
+                                'color': 'royalblue', 'alpha': 0.5, 'connectionstyle': "arc3,rad=0.2"}, va='center')
+    ax.tick_params(left=False, labelleft=False, bottom=False, labelbottom=False)
+    ax.axis('off')
+    plt.xlim(demand0[o_x].min(), demand0[o_x].max())
+    plt.ylim(demand0[o_y].min(), demand0[o_y].max())
+    ctx.add_basemap(ax, crs=boundary_plot.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
+    plt.tight_layout()
 
 
 # Link OD data to road network
-all_files = ['D:\\MDLD_OD\\Netmob\\\\network\\Medan_planet_97.769_2.686_bd62ebe3.osm.pbf', ]
-for ef in all_files:
+# all_files = ['D:\\MDLD_OD\\Netmob\\\\network\\Medan_planet_97.769_2.686_bd62ebe3.osm.pbf', ]
+for ef in all_files[17:]:
     # ef=all_files[-12]
     e_name = ef.split('\\')[-1].split('_')[0]
     e_ct = city_list.loc[city_list['Name'] == e_name, 'Country_code'].values[0]
@@ -75,15 +79,15 @@ for ef in all_files:
     link["geometry"] = gpd.GeoSeries.from_wkt(link["geometry"])
     link = gpd.GeoDataFrame(link, geometry='geometry', crs='EPSG:4326')
 
-    poly_bound = node.geometry.bounds
-    utm_code = convert_wgs_to_utm(poly_bound['minx'][0], poly_bound['miny'][0])
+    # poly_bound = node.geometry.bounds
+    # utm_code = convert_wgs_to_utm(poly_bound['minx'][0], poly_bound['miny'][0])
 
     # Read od we need
     od_raw = pd.read_csv(r'D:\MDLD_OD\Netmob\OD\weekly\H37\od_week_h37_%s_2019.csv' % e_ct)
     # od_raw['start_h3_7_cor'] = od_raw['start_h3_7'].apply(h3.h3_to_geo)
     # od_raw['end_h3_7_cor'] = od_raw['end_h3_7'].apply(h3.h3_to_geo)
 
-    # All H3_7 points
+    # All H3_7 points with OD flows
     H3_7_points = pd.DataFrame(np.vstack([od_raw[['start_h3_7']].values, od_raw[['end_h3_7']].values]))
     H3_7_points.columns = ['h3_7']
     H3_7_points = H3_7_points.drop_duplicates().reset_index(drop=True)
@@ -94,6 +98,7 @@ for ef in all_files:
     H3_7_points_gpd = H3_7_points_gpd.to_crs(epsg=3857)
     H3_7_points_gpd['lon_utm'] = H3_7_points_gpd.get_coordinates()['x']
     H3_7_points_gpd['lat_utm'] = H3_7_points_gpd.get_coordinates()['y']
+    H3_7_points_gpd_raw = H3_7_points_gpd.copy()
 
     node_3857 = node.to_crs(epsg=3857)
     node_3857['lon_utm'] = node_3857.get_coordinates()['x']
@@ -107,16 +112,30 @@ for ef in all_files:
     H3_7_points_gpd['index'] = indexes_ckd1
     H3_7_points_gpd['distance'] = dist_ckd1
     # H3_7_points_gpd = H3_7_points_gpd.merge(node_3857[['index', 'node_id']], on='index')
-    H3_7_points_gpd = H3_7_points_gpd[H3_7_points_gpd['distance'] < 2000].reset_index(drop=True)
-
-    # fig, ax = plt.subplots()
-    # H3_7_points_gpd.plot(ax=ax, color='k', markersize=3)
-    # node_3857[node_3857['node_id'].isin(H3_7_points_gpd['node_id'])].plot(ax=ax, color='green', markersize=3, alpha=0.2)
-    # # node_3857_main.plot(ax=ax, color='red', markersize=3, alpha=0.2)
-    # H3_7_points_gpd[H3_7_points_gpd['distance'] < 2000].plot(ax=ax, color='red', markersize=5, alpha=0.5)
-
+    H3_7_points_gpd = H3_7_points_gpd[H3_7_points_gpd['distance'] < 5000].reset_index(drop=True)
     od_raw = od_raw[
         (od_raw['start_h3_7'].isin(H3_7_points_gpd['h3_7'])) & (od_raw['end_h3_7'].isin(H3_7_points_gpd['h3_7']))]
+
+    H3_7_points_gpd_cor = H3_7_points_gpd[['h3_7', 'lat_utm', 'lon_utm']]
+    H3_7_points_gpd_cor.columns = ['start_h3_7', 'start_h3_7_lat', 'start_h3_7_lng']
+    od_raw = od_raw.merge(H3_7_points_gpd_cor, on='start_h3_7')
+    H3_7_points_gpd_cor.columns = ['end_h3_7', 'end_h3_7_lat', 'end_h3_7_lng']
+    od_raw = od_raw.merge(H3_7_points_gpd_cor, on='end_h3_7')
+
+    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(10, 8))
+    # H3_7_points_gpd_raw.plot(ax=ax, color='k', markersize=5)  # all OD points
+    # node_3857.plot(ax=ax, color='red', markersize=1, alpha=0.1)  # all road points
+    H3_7_points_gpd.plot(ax=ax, color='green', markersize=10, alpha=0.5)
+    for kk in range(0, len(od_raw)):
+        ax.annotate('', xy=(od_raw.loc[kk, 'start_h3_7_lng'], od_raw.loc[kk, 'start_h3_7_lat']),
+                    xytext=(od_raw.loc[kk, 'end_h3_7_lng'], od_raw.loc[kk, 'end_h3_7_lat']),
+                    arrowprops={'arrowstyle': '->', 'lw': 10 * od_raw.loc[kk, 'trip_count'] / max(od_raw['trip_count']),
+                                'color': 'royalblue', 'alpha': 0.5, 'connectionstyle': "arc3,rad=0.2"}, va='center')
+    ax.tick_params(left=False, labelleft=False, bottom=False, labelbottom=False)
+    plt.tight_layout()
+    Path(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name).mkdir(parents=True, exist_ok=True)
+    plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_od.pdf' % e_name)
+    plt.close()
 
     # od_raw = od_raw[od_raw['monthly_total'] > 0.1].reset_index(drop=True)
     cbg_list = set(od_raw['start_h3_7']).union(set(od_raw['end_h3_7']))
@@ -139,12 +158,12 @@ for ef in all_files:
     node = node.drop('h3_7', axis=1)
 
     ## Plot nodes and links
-    fig, ax = plt.subplots(figsize=(9, 7))
-    link.plot(ax=ax, lw=0.2, color='gray', alpha=0.5)
-    node[~node['zone_id'].isnull()].plot(ax=ax, markersize=10, color='red', alpha=1)
-    plt.axis('off')
-    plt.tight_layout()
-    plt.close()
+    # fig, ax = plt.subplots(figsize=(9, 7))
+    # link.plot(ax=ax, lw=0.2, color='gray', alpha=0.5)
+    # node[~node['zone_id'].isnull()].plot(ax=ax, markersize=10, color='red', alpha=1)
+    # plt.axis('off')
+    # plt.tight_layout()
+    # plt.close()
     # plt.show()
 
     # Generate setting for DTALite
@@ -171,7 +190,6 @@ for ef in all_files:
     link_types = link_type.to_dict(orient='records')
 
     # Output
-    Path(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name).mkdir(parents=True, exist_ok=True)
     # shutil.copy2(r'D:\MDLD_OD\DTALite_230915.exe', r"D:\MDLD_OD\Simulation\%s" % e_cbsa)
     shutil.copy2(r'D:\MDLD_OD\DTALite_0602_2024.exe', r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
     save_settings_yml(r"D:\MDLD_OD\Netmob\Simulation\%s\settings.yml" % e_name, assignment_settings, mode_types,
@@ -185,24 +203,27 @@ for ef in all_files:
     os.chdir(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
     subprocess.call([r"D:\MDLD_OD\Netmob\Simulation\%s\DTALite_0602_2024.exe" % e_name])
 
-    # Plot link performance
+    # # Plot link performance
     assign_all = pd.read_csv(r'D:\MDLD_OD\Netmob\Simulation\%s\link_performance.csv' % e_name)
     assign_all['vehicle_volume'] = assign_all['vehicle_volume'].fillna(0)
     assign_all = assign_all[assign_all['vehicle_volume'] > 0].reset_index(drop=True)
     binning = mapclassify.NaturalBreaks(assign_all['vehicle_volume'], k=5)  # NaturalBreaks
-    assign_all['cut_jenks'] = (binning.yb + 1) * 0.5
+    assign_all['cut_jenks'] = binning.yb + 1
     aadt = link.merge(assign_all[['from_node_id', 'to_node_id', 'cut_jenks', 'vehicle_volume', 'speed_kmph']],
                       on=['from_node_id', 'to_node_id'], how='left')
-    aadt.to_file(r'D:\MDLD_OD\Netmob\aadt_test.shp')
+    aadt['cut_jenks'] = aadt['cut_jenks'].fillna(0.5)
+    aadt['vehicle_volume'] = aadt['vehicle_volume'].fillna(0)
+    # aadt.to_file(r'D:\MDLD_OD\Netmob\aadt_test.shp')
 
     fig, ax = plt.subplots(figsize=(9, 7))
-    aadt[aadt['vehicle_volume'] > 0].plot(column='vehicle_volume', cmap='RdYlGn_r', scheme="natural_breaks", k=5,
-                                          lw=aadt['cut_jenks'], ax=ax, alpha=0.6, legend=True,
-                                          legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1,
-                                                       'loc': 'upper left'})
+    aadt[aadt['vehicle_volume'] == 0].plot(ax=ax, alpha=0.1, lw=1, color='gray')
+    aadt[aadt['vehicle_volume'] > 0].plot(
+        column='cut_jenks', cmap='RdYlGn_r', scheme="user_defined",
+        classification_kwds={'bins': list(set(aadt['cut_jenks']))}, lw=aadt['cut_jenks'], ax=ax, alpha=0.6,
+        legend=False, legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
     ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
     # plt.subplots_adjust(top=0.99, bottom=0.003, left=0.0, right=1.0, hspace=0.0, wspace=0.0)
     plt.tight_layout()
     plt.axis('off')
     plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_traffic.pdf' % e_name)
-    # plt.close()
+    plt.close()
