@@ -121,8 +121,7 @@ for ct_n in ['co', 'id', 'mx', 'in']:
         device_count['local_date'] = pd.to_datetime(device_count['local_date'], format='%Y%m%d')
         device_count_avg = device_count.groupby('geohash_5').mean().reset_index()
         device_count_avg['geohash_5_cor'] = device_count_avg['geohash_5'].apply(pgh.decode_exactly)
-        device_count_corr = pd.DataFrame(device_count_avg['geohash_5_cor'].tolist(),
-                                         index=device_count_avg.index)
+        device_count_corr = pd.DataFrame(device_count_avg['geohash_5_cor'].tolist(), index=device_count_avg.index)
         device_count_corr.columns = ['lat', 'lng', 'err1', 'err2']
         device_count_avg = device_count_avg.join(device_count_corr)
         all_devices = device_count_avg[(device_count_avg['lng'] > bbox[0]) & (device_count_avg['lng'] < bbox[2]) & (

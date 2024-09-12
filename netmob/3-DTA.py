@@ -195,8 +195,7 @@ for ef in all_files:
                OD_Graph2.transitivity_undirected(), len(set(communities2.membership)),
                max(components2.sizes()), len(components2.sizes()), max(Counter(communities2.membership).values()),
                od_raw[od_raw['start_h3_7'] == od_raw['end_h3_7']]['trip_count_raw'].sum() / od_raw[
-                   'trip_count_raw'].sum(),
-               len(od_raw), len(od_raw[od_raw['start_h3_7'] == od_raw['end_h3_7']]),
+                   'trip_count_raw'].sum(), len(od_raw), len(od_raw[od_raw['start_h3_7'] == od_raw['end_h3_7']]),
                (od_raw['trip_count_raw'] * od_raw['m_length_m']).sum() / (od_raw['trip_count_raw'].sum()),
                (od_raw['trip_count_raw'] * od_raw['m_duration_min']).sum() / (od_raw['trip_count_raw'].sum()),
                (od_raw['trip_count_raw'] * od_raw['m_points_no']).sum() / (od_raw['trip_count_raw'].sum()),
@@ -254,18 +253,18 @@ for ef in all_files:
     link_type.columns = ['link_type', 'link_type_name', 'free_speed_auto', 'capacity_auto', 'traffic_flow_model']
     link_types = link_type.to_dict(orient='records')
     #
-    # # Output
-    # shutil.copy2(r'D:\MDLD_OD\DTALite_0602_2024.exe', r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
-    # save_settings_yml(r"D:\MDLD_OD\Netmob\Simulation\%s\settings.yml" % e_name, assignment_settings, mode_types,
-    #                   demand_periods, demand_files, subarea, link_types, departure_time_profiles)
-    # od_raw[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\demand.csv" % e_name,
-    #                                                     index=False)
-    # node.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\node.csv" % e_name, index=False)
-    # link.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\link.csv" % e_name, index=False)
-    #
-    # # Run assignment
-    # os.chdir(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
-    # subprocess.call([r"D:\MDLD_OD\Netmob\Simulation\%s\DTALite_0602_2024.exe" % e_name])
+    # Output
+    shutil.copy2(r'D:\MDLD_OD\DTALite_0602_2024.exe', r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
+    save_settings_yml(r"D:\MDLD_OD\Netmob\Simulation\%s\settings.yml" % e_name, assignment_settings, mode_types,
+                      demand_periods, demand_files, subarea, link_types, departure_time_profiles)
+    od_raw[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\demand.csv" % e_name,
+                                                        index=False)
+    node.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\node.csv" % e_name, index=False)
+    link.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\link.csv" % e_name, index=False)
+
+    # Run assignment
+    os.chdir(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
+    subprocess.call([r"D:\MDLD_OD\Netmob\Simulation\%s\DTALite_0602_2024.exe" % e_name])
     #
     # # Plot link performance
     assign_all = pd.read_csv(r'D:\MDLD_OD\Netmob\Simulation\%s\link_performance.csv' % e_name)
