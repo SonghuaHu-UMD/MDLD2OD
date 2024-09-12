@@ -12,6 +12,13 @@ url_r = r'D:\MDLD_OD\Netmob\\network\\'
 city_list = pd.read_excel(r'D:\MDLD_OD\Netmob\City_list.xlsx')
 city_list = city_list.join(
     city_list['Latitude/Longitude'].str.split(' / ', n=1, expand=True).rename(columns={0: 'Latitude', 1: 'Longitude'}))
+# Cities to metros
+total_pop = city_list.groupby('Metro')['Population'].sum().reset_index()
+others_need = city_list.drop_duplicates(subset='Metro')
+others_need = others_need[others_need['Metro'] != '']
+others_need = others_need[['Name', 'Metro', 'Latitude/Longitude', 'Country']].merge(total_pop, on='Metro')
+others_need = others_need.sort_values(by=['Country', 'Population'])
+others_need.to_excel(r'D:\MDLD_OD\Netmob\metros.xlsx')
 
 # Creat the url to download osm files from bbbike
 osm_url = []

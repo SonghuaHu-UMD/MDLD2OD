@@ -11,8 +11,12 @@ import mapclassify
 import contextily as ctx
 import yaml
 import h3
+from collections import Counter
 import scipy.spatial
 import math
+import pygeohash as pgh
+import igraph
+from functools import reduce
 
 plt.rcParams.update(
     {'font.size': 15, 'font.family': "serif", 'mathtext.fontset': 'dejavuserif', 'xtick.direction': 'in',
@@ -24,6 +28,7 @@ plt.rcParams.update(
 url_r = r'D:\MDLD_OD\Netmob\\network\\'
 all_files = glob.glob(url_r + '*.pbf')
 city_list = pd.read_excel(r'D:\MDLD_OD\Netmob\City_list.xlsx')
+city_wt = pd.read_excel(r'D:\MDLD_OD\Netmob\results\city_wt.xlsx')
 
 
 def save_settings_yml(filename, assignment_settings, mode_types, demand_periods, demand_files, subarea, link_types,
@@ -53,16 +58,18 @@ def plot_od(demand0, boundary_plot, plot_name, o_x, o_y, d_x, d_y):
 
 # Link OD data to road network
 # all_files = ['D:\\MDLD_OD\\Netmob\\\\network\\Medan_planet_97.769_2.686_bd62ebe3.osm.pbf', ]
-for ef in all_files[17:]:
-    # ef=all_files[-12]
+for ef in all_files:
+    # ef=all_files[0]
     e_name = ef.split('\\')[-1].split('_')[0]
     e_ct = city_list.loc[city_list['Name'] == e_name, 'Country_code'].values[0]
+    Path(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name).mkdir(parents=True, exist_ok=True)
     print('-------------- Start processing %s --------------' % e_name)
 
     node = pd.read_csv(url_r + ef.split('\\')[-1][0:-4] + '.pbf_node.csv')
     link = pd.read_csv(url_r + ef.split('\\')[-1][0:-4] + '.pbf_link.csv')
-    # link = link[link['link_type_name'].isin(
-    #     ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'connector'])].reset_index(drop=True)
+    link = link[link['link_type_name'].isin(
+        ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'connector'])].reset_index(drop=True)
+    link['capacity'] = link['capacity'] * link['lanes']
 
     # All link's node should be found in node.csv
     link_node = set(list(set(link['from_node_id'])) + list(set(link['to_node_id'])))
@@ -84,8 +91,39 @@ for ef in all_files[17:]:
 
     # Read od we need
     od_raw = pd.read_csv(r'D:\MDLD_OD\Netmob\OD\weekly\H37\od_week_h37_%s_2019.csv' % e_ct)
-    # od_raw['start_h3_7_cor'] = od_raw['start_h3_7'].apply(h3.h3_to_geo)
-    # od_raw['end_h3_7_cor'] = od_raw['end_h3_7'].apply(h3.h3_to_geo)
+    od_raw = od_raw[od_raw['week_number'] != 53]
+    od_raw = od_raw.groupby(['start_h3_7', 'end_h3_7']).mean().reset_index()
+    od_raw['trip_count'] = (od_raw['trip_count'] / 7) * 0.1
+    # od_raw.groupby('week_number')['trip_count'].sum().plot()
+
+    # Do the weighting
+    avg_weight = pd.read_pickle(r'D:\MDLD_OD\Netmob\pop\all_pop_new_%s.pkl' % e_ct)
+    avg_weight = avg_weight[['geohash_5', 'weights']]
+    # daily_pop_weight = 4345714 / 394269.96875  # daily adjust
+    # avg_weight['weights'] = avg_weight['weights'] * daily_pop_weight
+
+    od_raw['start_h3_7_cor'] = od_raw['start_h3_7'].apply(h3.h3_to_geo)
+    od_raw['end_h3_7_cor'] = od_raw['end_h3_7'].apply(h3.h3_to_geo)
+
+    od_raw_corr = pd.DataFrame(od_raw['start_h3_7_cor'].tolist(), index=od_raw.index)
+    od_raw_corr.columns = ['start_lat', 'start_lng']
+    od_raw_corr['start_geohash_5'] = od_raw_corr.apply(lambda x: pgh.encode(x.start_lat, x.start_lng, 5), axis=1)
+    od_raw = od_raw.join(od_raw_corr)
+    avg_weight.columns = ['start_geohash_5', 'start_weights']
+    od_raw = od_raw.merge(avg_weight, on='start_geohash_5', how='left')
+
+    od_raw_corr = pd.DataFrame(od_raw['end_h3_7_cor'].tolist(), index=od_raw.index)
+    od_raw_corr.columns = ['end_lat', 'end_lng']
+    od_raw_corr['end_geohash_5'] = od_raw_corr.apply(lambda x: pgh.encode(x.end_lat, x.end_lng, 5), axis=1)
+    od_raw = od_raw.join(od_raw_corr)
+    avg_weight.columns = ['end_geohash_5', 'end_weights']
+    od_raw = od_raw.merge(avg_weight, on='end_geohash_5', how='left')
+    na_rt = od_raw['start_weights'].isnull().sum() / len(od_raw)
+    print(od_raw['start_weights'].isnull().sum() / len(od_raw))
+    od_raw['start_weights'] = od_raw['start_weights'].fillna(od_raw['start_weights'].mean())
+    od_raw['end_weights'] = od_raw['end_weights'].fillna(od_raw['end_weights'].mean())
+    od_raw['trip_count_raw'] = od_raw['trip_count']
+    od_raw['trip_count'] = od_raw['trip_count'] * ((od_raw['start_weights'] + od_raw['end_weights']) / 2)
 
     # All H3_7 points with OD flows
     H3_7_points = pd.DataFrame(np.vstack([od_raw[['start_h3_7']].values, od_raw[['end_h3_7']].values]))
@@ -105,14 +143,15 @@ for ef in all_files[17:]:
     node_3857['lat_utm'] = node_3857.get_coordinates()['y']
     node_3857_main = node_3857[node_3857['node_id'].isin(link_node_main)].reset_index(drop=True)
 
-    # Querying for the k-nearest neighbors
-    ref_points = node_3857[['lon_utm', 'lat_utm']].values
+    # Querying for the k-nearest neighbors: only to high-level road
+    ref_points = node_3857_main[['lon_utm', 'lat_utm']].values
     points = np.dstack([H3_7_points_gpd['lon_utm'], H3_7_points_gpd['lat_utm']])[0]
     dist_ckd1, indexes_ckd1 = scipy.spatial.cKDTree(ref_points).query(points)
-    H3_7_points_gpd['index'] = indexes_ckd1
+    # H3_7_points_gpd['index'] = indexes_ckd1
+    H3_7_points_gpd['index'] = list(node_3857_main.loc[indexes_ckd1, 'index'])  # get index of node
     H3_7_points_gpd['distance'] = dist_ckd1
     # H3_7_points_gpd = H3_7_points_gpd.merge(node_3857[['index', 'node_id']], on='index')
-    H3_7_points_gpd = H3_7_points_gpd[H3_7_points_gpd['distance'] < 5000].reset_index(drop=True)
+    H3_7_points_gpd = H3_7_points_gpd[H3_7_points_gpd['distance'] < 8000].reset_index(drop=True)
     od_raw = od_raw[
         (od_raw['start_h3_7'].isin(H3_7_points_gpd['h3_7'])) & (od_raw['end_h3_7'].isin(H3_7_points_gpd['h3_7']))]
 
@@ -132,14 +171,48 @@ for ef in all_files[17:]:
                     arrowprops={'arrowstyle': '->', 'lw': 10 * od_raw.loc[kk, 'trip_count'] / max(od_raw['trip_count']),
                                 'color': 'royalblue', 'alpha': 0.5, 'connectionstyle': "arc3,rad=0.2"}, va='center')
     ax.tick_params(left=False, labelleft=False, bottom=False, labelbottom=False)
+    ctx.add_basemap(ax, crs=H3_7_points_gpd.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
     plt.tight_layout()
-    Path(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name).mkdir(parents=True, exist_ok=True)
-    plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_od.pdf' % e_name)
+    plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_od_%s.pdf' % (e_name, e_name))
     plt.close()
+
+    # OD Network analysis
+    OD_Distance = od_raw.drop_duplicates(subset=['start_h3_7', 'end_h3_7'])[['start_h3_7', 'end_h3_7', 'mdn_length_m']]
+    OD_Graph1 = igraph.Graph.TupleList([tuple(x) for x in OD_Distance.values], directed=True,
+                                       edge_attrs=['mdn_length_m'])
+    communities1 = OD_Graph1.community_infomap(edge_weights='mdn_length_m')
+    components1 = OD_Graph1.connected_components(mode='weak')
+
+    OD_Trip = od_raw.drop_duplicates(subset=['start_h3_7', 'end_h3_7'])[['start_h3_7', 'end_h3_7', 'trip_count_raw']]
+    OD_Graph2 = igraph.Graph.TupleList([tuple(x) for x in OD_Trip.values], directed=True, edge_attrs=['trip_count_raw'])
+    communities2 = OD_Graph2.community_infomap(edge_weights='trip_count_raw')
+    components2 = OD_Graph2.connected_components(mode='weak')
+
+    dist_nt = [OD_Graph1.diameter(directed=True, weights='mdn_length_m'), OD_Graph1.density(loops=True),
+               OD_Graph1.transitivity_undirected(), len(set(communities1.membership)),
+               max(components1.sizes()), len(components1.sizes()), max(Counter(communities1.membership).values()),
+               OD_Graph2.diameter(directed=True, weights='trip_count_raw'), OD_Graph2.density(loops=True),
+               OD_Graph2.transitivity_undirected(), len(set(communities2.membership)),
+               max(components2.sizes()), len(components2.sizes()), max(Counter(communities2.membership).values()),
+               od_raw[od_raw['start_h3_7'] == od_raw['end_h3_7']]['trip_count_raw'].sum() / od_raw[
+                   'trip_count_raw'].sum(),
+               len(od_raw), len(od_raw[od_raw['start_h3_7'] == od_raw['end_h3_7']]),
+               (od_raw['trip_count_raw'] * od_raw['m_length_m']).sum() / (od_raw['trip_count_raw'].sum()),
+               (od_raw['trip_count_raw'] * od_raw['m_duration_min']).sum() / (od_raw['trip_count_raw'].sum()),
+               (od_raw['trip_count_raw'] * od_raw['m_points_no']).sum() / (od_raw['trip_count_raw'].sum()),
+               sum(od_raw['trip_count_raw'])]
+    od_network = pd.DataFrame([dist_nt])
+    od_network.columns = ['diameter_d', 'density_d', 'transitivity_d', 'communities_d', 'max_comp_d', 'num_comp_d',
+                          'max_comm_d', 'diameter_v', 'density_v', 'transitivity_v', 'communities_v', 'max_comp_v',
+                          'num_comp_v', 'max_comm_v', 'self_loop', 'od_count', 'od_self_count', 'avg_dist',
+                          'avg_duration', 'avg_points', 'total_trips']
+    od_network = pd.concat([city_wt[city_wt['name'] == e_name].reset_index(drop=True), od_network], axis=1)
 
     # od_raw = od_raw[od_raw['monthly_total'] > 0.1].reset_index(drop=True)
     cbg_list = set(od_raw['start_h3_7']).union(set(od_raw['end_h3_7']))
     print('Number of zones: %s' % len(cbg_list))
+    od_network['PA_count'] = len(cbg_list)
+    od_network['na_ratio'] = na_rt
 
     # Change zone id from CBFIPS to int
     zone_ids = pd.DataFrame({'start_h3_7': list(cbg_list), 'o_zone_id': range(0, len(cbg_list))})
@@ -149,6 +222,7 @@ for ef in all_files[17:]:
     # od_raw = od_raw.drop(['destination', 'origin'], axis=1)
     od_raw = od_raw[['o_zone_id', 'd_zone_id', 'trip_count']]
     od_raw.columns = ['o_zone_id', 'd_zone_id', 'volume']
+    od_raw = od_raw[od_raw['o_zone_id'] != od_raw['d_zone_id']].reset_index(drop=True)
 
     # node with zone id
     node = node.merge(H3_7_points_gpd[['index', 'h3_7']], on='index', how='left')
@@ -156,15 +230,6 @@ for ef in all_files[17:]:
     zone_ids.columns = ['h3_7', 'zone_id']
     node = node.merge(zone_ids, on='h3_7', how='left')
     node = node.drop('h3_7', axis=1)
-
-    ## Plot nodes and links
-    # fig, ax = plt.subplots(figsize=(9, 7))
-    # link.plot(ax=ax, lw=0.2, color='gray', alpha=0.5)
-    # node[~node['zone_id'].isnull()].plot(ax=ax, markersize=10, color='red', alpha=1)
-    # plt.axis('off')
-    # plt.tight_layout()
-    # plt.close()
-    # plt.show()
 
     # Generate setting for DTALite
     assignment_settings = {'number_of_iterations': 20, 'route_output': 0, 'simulation_output': 0,
@@ -188,24 +253,24 @@ for ef in all_files[17:]:
     link_type = link_type.merge(link_type_df, on='link_type_name')
     link_type.columns = ['link_type', 'link_type_name', 'free_speed_auto', 'capacity_auto', 'traffic_flow_model']
     link_types = link_type.to_dict(orient='records')
-
-    # Output
-    # shutil.copy2(r'D:\MDLD_OD\DTALite_230915.exe', r"D:\MDLD_OD\Simulation\%s" % e_cbsa)
-    shutil.copy2(r'D:\MDLD_OD\DTALite_0602_2024.exe', r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
-    save_settings_yml(r"D:\MDLD_OD\Netmob\Simulation\%s\settings.yml" % e_name, assignment_settings, mode_types,
-                      demand_periods, demand_files, subarea, link_types, departure_time_profiles)
-    od_raw[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\demand.csv" % e_name,
-                                                        index=False)
-    node.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\node.csv" % e_name, index=False)
-    link.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\link.csv" % e_name, index=False)
-
-    # Run assignment
-    os.chdir(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
-    subprocess.call([r"D:\MDLD_OD\Netmob\Simulation\%s\DTALite_0602_2024.exe" % e_name])
-
+    #
+    # # Output
+    # shutil.copy2(r'D:\MDLD_OD\DTALite_0602_2024.exe', r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
+    # save_settings_yml(r"D:\MDLD_OD\Netmob\Simulation\%s\settings.yml" % e_name, assignment_settings, mode_types,
+    #                   demand_periods, demand_files, subarea, link_types, departure_time_profiles)
+    # od_raw[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\demand.csv" % e_name,
+    #                                                     index=False)
+    # node.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\node.csv" % e_name, index=False)
+    # link.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\link.csv" % e_name, index=False)
+    #
+    # # Run assignment
+    # os.chdir(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
+    # subprocess.call([r"D:\MDLD_OD\Netmob\Simulation\%s\DTALite_0602_2024.exe" % e_name])
+    #
     # # Plot link performance
     assign_all = pd.read_csv(r'D:\MDLD_OD\Netmob\Simulation\%s\link_performance.csv' % e_name)
     assign_all['vehicle_volume'] = assign_all['vehicle_volume'].fillna(0)
+    assign_all_cor = assign_all.copy()
     assign_all = assign_all[assign_all['vehicle_volume'] > 0].reset_index(drop=True)
     binning = mapclassify.NaturalBreaks(assign_all['vehicle_volume'], k=5)  # NaturalBreaks
     assign_all['cut_jenks'] = binning.yb + 1
@@ -213,17 +278,43 @@ for ef in all_files[17:]:
                       on=['from_node_id', 'to_node_id'], how='left')
     aadt['cut_jenks'] = aadt['cut_jenks'].fillna(0.5)
     aadt['vehicle_volume'] = aadt['vehicle_volume'].fillna(0)
-    # aadt.to_file(r'D:\MDLD_OD\Netmob\aadt_test.shp')
-
+    # # aadt.to_file(r'D:\MDLD_OD\Netmob\aadt_test.shp')
+    #
     fig, ax = plt.subplots(figsize=(9, 7))
-    aadt[aadt['vehicle_volume'] == 0].plot(ax=ax, alpha=0.1, lw=1, color='gray')
+    aadt[aadt['vehicle_volume'] == 0].plot(ax=ax, alpha=0.5, lw=0.25, color='gray')
     aadt[aadt['vehicle_volume'] > 0].plot(
         column='cut_jenks', cmap='RdYlGn_r', scheme="user_defined",
-        classification_kwds={'bins': list(set(aadt['cut_jenks']))}, lw=aadt['cut_jenks'], ax=ax, alpha=0.6,
+        classification_kwds={'bins': list(set(aadt['cut_jenks']))}, lw=0.5, ax=ax, alpha=0.6,
         legend=False, legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
     ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
     # plt.subplots_adjust(top=0.99, bottom=0.003, left=0.0, right=1.0, hspace=0.0, wspace=0.0)
     plt.tight_layout()
-    plt.axis('off')
-    plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_traffic.pdf' % e_name)
+    # plt.axis('off')
+    plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_traffic_%s.pdf' % (e_name, e_name))
     plt.close()
+    #
+    # all metrics
+    link_length = link.groupby('link_type')['length'].sum().reset_index()
+    link_length.columns = ['link_type', 'length']
+    zero_link_length = assign_all_cor[assign_all_cor['vehicle_volume'] == 0].groupby('link_type')[
+        'distance_km'].sum().reset_index()
+    zero_link_length.columns = ['link_type', 'zero_length']
+    zero_link_length['zero_length'] = zero_link_length['zero_length'] * 1000  # to m
+    link_count = link.groupby('link_type')['link_id'].count().reset_index()
+    link_count.columns = ['link_type', 'link_count']
+    VOC = assign_all_cor.groupby('link_type')['VOC'].mean().reset_index()
+    VOC.columns = ['link_type', 'VOC_mean']
+    VOC_max = assign_all_cor.groupby('link_type')['VOC'].max().reset_index()
+    VOC_max.columns = ['link_type', 'VOC_max']
+    speed = assign_all_cor.groupby('link_type')['speed_mph'].mean().reset_index()
+    speed.columns = ['link_type', 'speed']
+    volume = assign_all_cor.groupby('link_type')['vehicle_volume'].mean().reset_index()
+    volume.columns = ['link_type', 'volume']
+    volume_max = assign_all_cor.groupby('link_type')['vehicle_volume'].max().reset_index()
+    volume_max.columns = ['link_type', 'volume_max']
+    df_merged = reduce(lambda left, right: pd.merge(left, right, on=['link_type'], how='outer'),
+                       [link_type, link_length, zero_link_length, link_count, VOC, VOC_max, volume, speed, volume_max])
+
+    all_metrics = pd.concat([df_merged, od_network.loc[od_network.index.repeat(len(df_merged))].reset_index(drop=True)],
+                            axis=1)
+    all_metrics.to_excel(r'D:\MDLD_OD\Netmob\Simulation\%s\all_metrics.xlsx' % e_name)
