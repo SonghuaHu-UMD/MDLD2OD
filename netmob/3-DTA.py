@@ -29,7 +29,24 @@ url_r = r'D:\MDLD_OD\Netmob\\network\\'
 all_files = glob.glob(url_r + '*.pbf')
 city_list = pd.read_excel(r'D:\MDLD_OD\Netmob\City_list.xlsx')
 city_wt = pd.read_excel(r'D:\MDLD_OD\Netmob\results\city_wt.xlsx')
+car_wt = pd.read_excel(r'D:\MDLD_OD\Netmob\car_weight.xlsx')
 
+# From osm2gmns
+default_lanes_dict = {'motorway': 4, 'trunk': 3, 'primary': 3, 'secondary': 2, 'tertiary': 2, 'residential': 1,
+                      'living_street': 1, 'service': 1, 'cycleway': 1, 'footway': 1, 'track': 1, 'unclassified': 1,
+                      'connector': 2}
+default_speed_dict = {'motorway': 120, 'trunk': 100, 'primary': 80, 'secondary': 60, 'tertiary': 40, 'residential': 30,
+                      'living_street': 30, 'service': 30, 'cycleway': 5, 'footway': 5, 'track': 30, 'unclassified': 30,
+                      'connector': 120}
+default_capacity_dict = {'motorway': 2300, 'trunk': 2200, 'primary': 1800, 'secondary': 1600, 'tertiary': 1200,
+                         'residential': 1000, 'living_street': 1000, 'service': 800, 'cycleway': 800, 'footway': 800,
+                         'track': 800, 'unclassified': 800, 'connector': 9999}
+defaults_all = pd.DataFrame([default_lanes_dict, default_speed_dict, default_capacity_dict]).T
+defaults_all = defaults_all.reset_index()
+defaults_all.columns = ['link_type_name', 'lanes_default', 'speed_default', 'capacity_default']
+
+
+# defaults_all.to_csv(r'D:\MDLD_OD\Netmob\results\link_defaults.csv')
 
 def save_settings_yml(filename, assignment_settings, mode_types, demand_periods, demand_files, subarea, link_types,
                       departure_time_profiles):
@@ -58,10 +75,11 @@ def plot_od(demand0, boundary_plot, plot_name, o_x, o_y, d_x, d_y):
 
 # Link OD data to road network
 # all_files = ['D:\\MDLD_OD\\Netmob\\\\network\\Medan_planet_97.769_2.686_bd62ebe3.osm.pbf', ]
-for ef in all_files:
-    # ef=all_files[0]
+for ef in all_files[20:]:
+    # ef=all_files[10]
     e_name = ef.split('\\')[-1].split('_')[0]
     e_ct = city_list.loc[city_list['Name'] == e_name, 'Country_code'].values[0]
+    car_wtr = car_wt.loc[car_wt['name'] == e_name, 'ct_weight'].values[0]
     Path(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name).mkdir(parents=True, exist_ok=True)
     print('-------------- Start processing %s --------------' % e_name)
 
@@ -69,7 +87,15 @@ for ef in all_files:
     link = pd.read_csv(url_r + ef.split('\\')[-1][0:-4] + '.pbf_link.csv')
     link = link[link['link_type_name'].isin(
         ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'connector'])].reset_index(drop=True)
+
+    # Reassign speed, capacity, and lanes
+    link = link.merge(defaults_all, on='link_type_name')
+    link['lanes'] = link['lanes_default']
+    link['free_speed'] = link['speed_default']
+    link['capacity'] = link['capacity_default']
     link['capacity'] = link['capacity'] * link['lanes']
+    link = link.drop(['lanes_default', 'speed_default', 'capacity_default'], axis=1)
+    # link.groupby('link_type_name')['free_speed'].mean()
 
     # All link's node should be found in node.csv
     link_node = set(list(set(link['from_node_id'])) + list(set(link['to_node_id'])))
@@ -143,7 +169,7 @@ for ef in all_files:
     node_3857['lat_utm'] = node_3857.get_coordinates()['y']
     node_3857_main = node_3857[node_3857['node_id'].isin(link_node_main)].reset_index(drop=True)
 
-    # Querying for the k-nearest neighbors: only to high-level road
+    # Querying for the k-nearest neighbors: at least secondary roads
     ref_points = node_3857_main[['lon_utm', 'lat_utm']].values
     points = np.dstack([H3_7_points_gpd['lon_utm'], H3_7_points_gpd['lat_utm']])[0]
     dist_ckd1, indexes_ckd1 = scipy.spatial.cKDTree(ref_points).query(points)
@@ -161,20 +187,20 @@ for ef in all_files:
     H3_7_points_gpd_cor.columns = ['end_h3_7', 'end_h3_7_lat', 'end_h3_7_lng']
     od_raw = od_raw.merge(H3_7_points_gpd_cor, on='end_h3_7')
 
-    fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(10, 8))
-    # H3_7_points_gpd_raw.plot(ax=ax, color='k', markersize=5)  # all OD points
-    # node_3857.plot(ax=ax, color='red', markersize=1, alpha=0.1)  # all road points
-    H3_7_points_gpd.plot(ax=ax, color='green', markersize=10, alpha=0.5)
-    for kk in range(0, len(od_raw)):
-        ax.annotate('', xy=(od_raw.loc[kk, 'start_h3_7_lng'], od_raw.loc[kk, 'start_h3_7_lat']),
-                    xytext=(od_raw.loc[kk, 'end_h3_7_lng'], od_raw.loc[kk, 'end_h3_7_lat']),
-                    arrowprops={'arrowstyle': '->', 'lw': 10 * od_raw.loc[kk, 'trip_count'] / max(od_raw['trip_count']),
-                                'color': 'royalblue', 'alpha': 0.5, 'connectionstyle': "arc3,rad=0.2"}, va='center')
-    ax.tick_params(left=False, labelleft=False, bottom=False, labelbottom=False)
-    ctx.add_basemap(ax, crs=H3_7_points_gpd.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
-    plt.tight_layout()
-    plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_od_%s.pdf' % (e_name, e_name))
-    plt.close()
+    # fig, ax = plt.subplots(ncols=1, nrows=1, figsize=(10, 8))
+    # # H3_7_points_gpd_raw.plot(ax=ax, color='k', markersize=5)  # all OD points
+    # # node_3857.plot(ax=ax, color='red', markersize=1, alpha=0.1)  # all road points
+    # H3_7_points_gpd.plot(ax=ax, color='green', markersize=10, alpha=0.5)
+    # for kk in range(0, len(od_raw)):
+    #     ax.annotate('', xy=(od_raw.loc[kk, 'start_h3_7_lng'], od_raw.loc[kk, 'start_h3_7_lat']),
+    #                 xytext=(od_raw.loc[kk, 'end_h3_7_lng'], od_raw.loc[kk, 'end_h3_7_lat']),
+    #                 arrowprops={'arrowstyle': '->', 'lw': 10 * od_raw.loc[kk, 'trip_count'] / max(od_raw['trip_count']),
+    #                             'color': 'royalblue', 'alpha': 0.3, 'connectionstyle': "arc3,rad=0.2"}, va='center')
+    # ax.tick_params(left=False, labelleft=False, bottom=False, labelbottom=False)
+    # ctx.add_basemap(ax, crs=H3_7_points_gpd.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
+    # plt.tight_layout()
+    # plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_od_%s.pdf' % (e_name, e_name))
+    # plt.close()
 
     # OD Network analysis
     OD_Distance = od_raw.drop_duplicates(subset=['start_h3_7', 'end_h3_7'])[['start_h3_7', 'end_h3_7', 'mdn_length_m']]
@@ -252,11 +278,12 @@ for ef in all_files:
     link_type = link_type.merge(link_type_df, on='link_type_name')
     link_type.columns = ['link_type', 'link_type_name', 'free_speed_auto', 'capacity_auto', 'traffic_flow_model']
     link_types = link_type.to_dict(orient='records')
-    #
+
     # Output
     shutil.copy2(r'D:\MDLD_OD\DTALite_0602_2024.exe', r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
     save_settings_yml(r"D:\MDLD_OD\Netmob\Simulation\%s\settings.yml" % e_name, assignment_settings, mode_types,
                       demand_periods, demand_files, subarea, link_types, departure_time_profiles)
+    od_raw['volume'] = od_raw['volume'] * car_wtr
     od_raw[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\demand.csv" % e_name,
                                                         index=False)
     node.to_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\node.csv" % e_name, index=False)
@@ -265,10 +292,26 @@ for ef in all_files:
     # Run assignment
     os.chdir(r"D:\MDLD_OD\Netmob\Simulation\%s" % e_name)
     subprocess.call([r"D:\MDLD_OD\Netmob\Simulation\%s\DTALite_0602_2024.exe" % e_name])
-    #
+
     # # Plot link performance
     assign_all = pd.read_csv(r'D:\MDLD_OD\Netmob\Simulation\%s\link_performance.csv' % e_name)
     assign_all['vehicle_volume'] = assign_all['vehicle_volume'].fillna(0)
+
+    # calculate speed
+    assign_all = pd.concat([assign_all, link[['link_type_name', 'free_speed', 'capacity']]], axis=1)
+    assign_all.loc[assign_all['link_type_name'].isin(['motorway', 'trunk']), 'speed_bpr'] = (
+            assign_all.loc[assign_all['link_type_name'].isin(['motorway', 'trunk']), 'free_speed'] / (
+            1 + 0.65625 * np.power(
+        assign_all.loc[assign_all['link_type_name'].isin(['motorway', 'trunk']), 'VOC'] + 0.5, 4.8)))
+    assign_all.loc[assign_all['link_type_name'].isin(['primary', 'secondary']), 'speed_bpr'] = (
+            assign_all.loc[assign_all['link_type_name'].isin(['primary', 'secondary']), 'free_speed'] / (
+            1 + 1 * np.power(assign_all.loc[assign_all['link_type_name'].isin(['primary', 'secondary']), 'VOC'] + 0.5,
+                             4)))
+    assign_all.loc[assign_all['link_type_name'].isin(['tertiary']), 'speed_bpr'] = (
+            assign_all.loc[assign_all['link_type_name'].isin(['tertiary']), 'free_speed'] / (
+            1 + 1.28571 * np.power(assign_all.loc[assign_all['link_type_name'].isin(['tertiary']), 'VOC'] + 0.5, 3)))
+
+    # Plot: volume
     assign_all_cor = assign_all.copy()
     assign_all = assign_all[assign_all['vehicle_volume'] > 0].reset_index(drop=True)
     binning = mapclassify.NaturalBreaks(assign_all['vehicle_volume'], k=5)  # NaturalBreaks
@@ -277,8 +320,6 @@ for ef in all_files:
                       on=['from_node_id', 'to_node_id'], how='left')
     aadt['cut_jenks'] = aadt['cut_jenks'].fillna(0.5)
     aadt['vehicle_volume'] = aadt['vehicle_volume'].fillna(0)
-    # # aadt.to_file(r'D:\MDLD_OD\Netmob\aadt_test.shp')
-    #
     fig, ax = plt.subplots(figsize=(9, 7))
     aadt[aadt['vehicle_volume'] == 0].plot(ax=ax, alpha=0.5, lw=0.25, color='gray')
     aadt[aadt['vehicle_volume'] > 0].plot(
@@ -291,28 +332,60 @@ for ef in all_files:
     # plt.axis('off')
     plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_traffic_%s.pdf' % (e_name, e_name))
     plt.close()
-    #
-    # all metrics
+
+    # Plot: speed
+    binning = mapclassify.NaturalBreaks(assign_all['speed_bpr'], k=5)  # NaturalBreaks
+    assign_all['cut_jenks'] = binning.yb + 1
+    # aadt = pd.concat([link, assign_all[['cut_jenks', 'vehicle_volume', 'speed_bpr']]], axis=1)
+    aadt = link.merge(assign_all[['from_node_id', 'to_node_id', 'cut_jenks', 'vehicle_volume', 'speed_kmph']],
+                      on=['from_node_id', 'to_node_id'], how='left')
+    aadt['cut_jenks'] = aadt['cut_jenks'].fillna(0.5)
+    aadt['vehicle_volume'] = aadt['vehicle_volume'].fillna(0)
+    fig, ax = plt.subplots(figsize=(9, 7))
+    aadt[aadt['vehicle_volume'] == 0].plot(ax=ax, alpha=0.5, lw=0.25, color='gray')
+    aadt[aadt['vehicle_volume'] > 0].plot(
+        column='cut_jenks', cmap='RdYlGn', scheme="user_defined",
+        classification_kwds={'bins': list(set(aadt['cut_jenks']))}, lw=0.5, ax=ax, alpha=0.6,
+        legend=False, legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
+    ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
+    # plt.subplots_adjust(top=0.99, bottom=0.003, left=0.0, right=1.0, hspace=0.0, wspace=0.0)
+    plt.tight_layout()
+    # plt.axis('off')
+    plt.savefig(r'D:\MDLD_OD\Netmob\Simulation\%s\assigned_speed_%s.pdf' % (e_name, e_name))
+    plt.close()
+
+    # compute all metrics for assignment outcome
     link_length = link.groupby('link_type')['length'].sum().reset_index()
     link_length.columns = ['link_type', 'length']
-    zero_link_length = assign_all_cor[assign_all_cor['vehicle_volume'] == 0].groupby('link_type')[
-        'distance_km'].sum().reset_index()
+    assign_all_cor0 = assign_all_cor[assign_all_cor['vehicle_volume'] == 0]
+    zero_link_length = assign_all_cor0.groupby('link_type')['distance_km'].sum().reset_index()
     zero_link_length.columns = ['link_type', 'zero_length']
     zero_link_length['zero_length'] = zero_link_length['zero_length'] * 1000  # to m
+
     link_count = link.groupby('link_type')['link_id'].count().reset_index()
     link_count.columns = ['link_type', 'link_count']
     VOC = assign_all_cor.groupby('link_type')['VOC'].mean().reset_index()
     VOC.columns = ['link_type', 'VOC_mean']
     VOC_max = assign_all_cor.groupby('link_type')['VOC'].max().reset_index()
     VOC_max.columns = ['link_type', 'VOC_max']
-    speed = assign_all_cor.groupby('link_type')['speed_mph'].mean().reset_index()
+    speed = assign_all_cor.groupby('link_type')['speed_bpr'].mean().reset_index()
     speed.columns = ['link_type', 'speed']
     volume = assign_all_cor.groupby('link_type')['vehicle_volume'].mean().reset_index()
     volume.columns = ['link_type', 'volume']
     volume_max = assign_all_cor.groupby('link_type')['vehicle_volume'].max().reset_index()
     volume_max.columns = ['link_type', 'volume_max']
+
+    assign_all_cor1 = assign_all_cor[assign_all_cor['vehicle_volume'] > 0]
+    VOC1 = assign_all_cor1.groupby('link_type')['VOC'].mean().reset_index()
+    VOC1.columns = ['link_type', 'VOC_mean1']
+    speed1 = assign_all_cor1.groupby('link_type')['speed_bpr'].mean().reset_index()
+    speed1.columns = ['link_type', 'speed1']
+    volume1 = assign_all_cor1.groupby('link_type')['vehicle_volume'].mean().reset_index()
+    volume1.columns = ['link_type', 'volume1']
+
     df_merged = reduce(lambda left, right: pd.merge(left, right, on=['link_type'], how='outer'),
-                       [link_type, link_length, zero_link_length, link_count, VOC, VOC_max, volume, speed, volume_max])
+                       [link_type, link_length, zero_link_length, link_count, VOC, VOC_max, volume, speed, volume_max,
+                        VOC1, speed1, volume1])
 
     all_metrics = pd.concat([df_merged, od_network.loc[od_network.index.repeat(len(df_merged))].reset_index(drop=True)],
                             axis=1)

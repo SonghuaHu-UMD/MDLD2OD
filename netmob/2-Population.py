@@ -22,10 +22,9 @@ plt.rcParams.update(
      'lines.linewidth': 1.5, 'legend.frameon': False, 'savefig.bbox': 'tight', 'savefig.pad_inches': 0.05})
 
 # Get population and device for each G5
-data_url = r'D:\MDLD_OD\Netmob\OD\weekly\H37\\'
 for ct_n in ['co', 'id', 'mx', 'in']:
     # Get device count
-    device_count = pd.read_csv(r'D:\MDLD_OD\Netmob\PD\daily\pd_2019_daily_gh5\pd_%s_2019_agg5_daily.csv' % ct_n)
+    device_count = pd.read_csv(r'D:\MDLD_OD\Netmob\PD\daily\gh5\pd_day_gh5_%s_2019.csv' % ct_n)
     device_count['local_date'] = pd.to_datetime(device_count['local_date'], format='%Y%m%d')
     device_count_avg = device_count.groupby('geohash_5').mean().reset_index()
     # daily_pop_weight = 4345714 / 394269.96875  # daily adjust
@@ -56,8 +55,6 @@ for ct_n in ['co', 'id', 'mx', 'in']:
         all_rowcol_pd = pd.concat([all_rowcol_pd, all_rowcols])
 
     # Calculate weighting
-    # daily_pop_weight = 4345714 / 394269.96875  # daily adjust
-    # all_rowcol_pd['devices'] = all_rowcol_pd['devices'] * daily_pop_weight
     all_rowcol_pd['weights'] = all_rowcol_pd['population'] / all_rowcol_pd['devices']
     all_rowcol_pd.to_pickle(r'D:\MDLD_OD\Netmob\pop\all_pop_new_%s.pkl' % (ct_n))
     print(all_rowcol_pd['weights'].describe())
@@ -80,13 +77,13 @@ for ct_n in ['co', 'id', 'mx', 'in']:
     fig, ax = plt.subplots(figsize=(4.5, 4))
     # ax.ticklabel_format(axis="x", style="sci", scilimits=(0, 0), useMathText=True)
     ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
-    sns.distplot(all_rowcol_pd.loc[all_rowcol_pd['weights'] < np.nanpercentile(all_rowcol_pd['weights'],
-                                                                               99), 'weights'], ax=ax, rug=True)
+    sns.distplot(all_rowcol_pd.loc[all_rowcol_pd['weights'] <
+                                   np.nanpercentile(all_rowcol_pd['weights'], 99), 'weights'], ax=ax, rug=True)
     plt.axvline(x=all_rowcol_pd['weights'].mean(), color='k', linestyle='--')
     plt.axvline(x=all_rowcol_pd['weights'].median(), color='r', linestyle='--')
     plt.xlabel('Population weight')
     plt.tight_layout()
-    plt.legend(['density', 'mean', 'median'])
+    plt.legend(['kde', 'density', 'mean', 'median'])
     plt.savefig(r'D:\MDLD_OD\Netmob\results\Weights_%s.pdf' % ct_n)
     plt.close()
 
@@ -117,7 +114,8 @@ for ct_n in ['co', 'id', 'mx', 'in']:
         # all_pop.shape
 
         # Device count
-        device_count = pd.read_csv(r'D:\MDLD_OD\Netmob\PD\daily\pd_2019_daily_gh5\pd_%s_2019_agg5_daily.csv' % ct_n)
+        # device_count = pd.read_csv(r'D:\MDLD_OD\Netmob\PD\daily\pd_2019_daily_gh5\pd_%s_2019_agg5_daily.csv' % ct_n)
+        device_count = pd.read_csv(r'D:\MDLD_OD\Netmob\PD\daily\gh5\pd_day_gh5_%s_2019.csv' % ct_n)
         device_count['local_date'] = pd.to_datetime(device_count['local_date'], format='%Y%m%d')
         device_count_avg = device_count.groupby('geohash_5').mean().reset_index()
         device_count_avg['geohash_5_cor'] = device_count_avg['geohash_5'].apply(pgh.decode_exactly)
@@ -147,7 +145,7 @@ for ct_n in ['co', 'id', 'mx', 'in']:
                      study_area_need.loc[each, 'Country_code'], study_area_need.loc[each, 'population']]
         all_rowcols.append(info_list)
 
-all_rowcols = pd.DataFrame(all_rowcols,
-                           columns=['Total_pop', 'Total_device', 'sampling_rate', 'name', 'country_code', 'pop'])
+all_rowcols = pd.DataFrame(
+    all_rowcols, columns=['Total_pop', 'Total_device', 'sampling_rate', 'name', 'country_code', 'pop'])
 all_rowcols.to_excel(r'D:\MDLD_OD\Netmob\results\city_wt.xlsx', index=False)
 # plt.plot(all_rowcols['Total_pop'],all_rowcols['Total_device'],'o')
