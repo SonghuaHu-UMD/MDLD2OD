@@ -18,6 +18,8 @@ import pygeohash as pgh
 import igraph
 from functools import reduce
 
+from IPython.core.pylabtools import figsize
+
 plt.rcParams.update(
     {'font.size': 15, 'font.family': "serif", 'mathtext.fontset': 'dejavuserif', 'xtick.direction': 'in',
      'xtick.major.size': 0.5, 'grid.linestyle': "--", 'axes.grid': True, "grid.alpha": 1, "grid.color": "#cccccc",
@@ -44,6 +46,41 @@ default_capacity_dict = {'motorway': 2300, 'trunk': 2200, 'primary': 1800, 'seco
 defaults_all = pd.DataFrame([default_lanes_dict, default_speed_dict, default_capacity_dict]).T
 defaults_all = defaults_all.reset_index()
 defaults_all.columns = ['link_type_name', 'lanes_default', 'speed_default', 'capacity_default']
+
+# Get hourly ratio
+for kk in ['co', 'id', 'mx', 'in']:
+    OD_3h = pd.read_csv(r'D:\MDLD_OD\Netmob\OD\3h\GH5\od_3h_gh5_%s_2019.csv' % kk)
+    OD_3h['start_geohash5_cor'] = OD_3h['start_geohash5'].apply(pgh.decode)
+    OD_3h['end_geohash5_cor'] = OD_3h['end_geohash5'].apply(pgh.decode)
+    OD_3h['local_time_dt'] = pd.to_datetime(OD_3h['local_time'].str[0:-11])
+    # - pd.to_timedelta(OD_3h['local_time'].str[-11:])
+    OD_3h['hour'] = OD_3h['local_time_dt'].dt.hour
+    OD_3h['dayofweek'] = OD_3h['local_time_dt'].dt.dayofweek
+    # hour_ratio.plot(marker='o', color='blue')
+    # hour_ratio = (hour_ratio / hour_ratio.groupby('dayofweek').sum()).reset_index()
+
+    # Add n blank rows
+    hour_ratio = OD_3h.groupby(['dayofweek', 'hour'])['trip_count'].mean().reset_index()
+    n = 3 * 60 / 5
+    new_index = pd.RangeIndex(len(hour_ratio) * (n + 1))
+    new_df = pd.DataFrame(index=new_index, columns=hour_ratio.columns, dtype='float')
+    ids = np.arange(len(hour_ratio)) * (n + 1)
+    new_df.loc[ids] = hour_ratio.values
+    new_df.loc[len(new_df) + 1] = new_df.loc[0]
+
+    new_df['trip_count'] = new_df['trip_count'].interpolate(method='polynomial', order=3)
+    new_df['dayofweek'] = new_df['dayofweek'].fillna(method='ffill').fillna(method='bfill')
+    # new_df['trip_count'].plot(marker='o', color='royalblue', alpha=0.5, markersize=2)
+    new_df['trip_total'] = new_df.groupby('dayofweek')['trip_count'].transform('sum')
+    new_df['trip_count'] = (new_df['trip_count'] / new_df['trip_total'])
+    new_df = new_df[new_df['hour'].isnull()]
+    fig, ax = plt.subplots(figsize=(5, 3))
+    ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
+    new_df['trip_count'].plot(marker='o', color='royalblue', alpha=0.3, markersize=1, ax=ax)
+    plt.ylabel('5-minute trip rate')
+    plt.tight_layout()
+    plt.savefig(r'D:\MDLD_OD\Netmob\results\trip_ratio_%s.pdf' % kk)
+    plt.close()
 
 
 # defaults_all.to_csv(r'D:\MDLD_OD\Netmob\results\link_defaults.csv')

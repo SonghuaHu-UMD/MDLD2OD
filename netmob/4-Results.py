@@ -117,6 +117,11 @@ for kk in ['total_trips', 'Total_device', 'PA_count', 'avg_duration', 'avg_dist'
 
 ######## 2. Analyze Link features ########
 all_metrics_link = all_metrics.groupby(['country', 'link_type_name'])[['length', 'link_count']].mean().reset_index()
+all_metrics.groupby(['link_type_name'])[['length']].sum() / all_metrics.groupby(['link_type_name'])[
+    ['length']].sum().sum()
+all_metrics.groupby(['country','link_type_name'])[['length']].sum() / all_metrics.groupby(['country'])[
+    ['length']].sum()
+all_metrics_links = all_metrics_link.groupby(['country'])[['length', 'link_count']].sum().reset_index()
 fig, ax = plt.subplots(figsize=(6.5, 4))
 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
 sns.barplot(all_metrics, x='link_type_name', y='length', hue='country', palette=sns.color_palette('coolwarm', 4))
@@ -220,7 +225,9 @@ for roadty in set(all_metrics_ass['link_type_name']):
     # plt.ylim([0, 1])
 
 ######## 3. Analyze assignment outcome ########
-# all_metrics_ass = all_metrics.groupby(['country', 'link_type_name'])[['volume1', 'speed1']].mean().reset_index()
+all_metrics.groupby(['country', 'link_type_name'])[['volume', 'speed','VOC_mean']].mean().reset_index()
+all_metrics.groupby([ 'link_type_name'])[['volume', 'speed','VOC_mean']].mean().reset_index()
+
 fig, ax = plt.subplots(figsize=(6.5, 5))
 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
 sns.barplot(all_metrics_ass, x='link_type_name', y='volume', hue='country', palette=sns.color_palette('coolwarm', 4))
@@ -232,7 +239,7 @@ plt.close()
 
 fig, ax = plt.subplots(figsize=(6.5, 5))
 # ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
-sns.barplot(all_metrics_ass, x='link_type_name', y='speed1', hue='country', palette=sns.color_palette('coolwarm', 4))
+sns.barplot(all_metrics_ass, x='link_type_name', y='speed', hue='country', palette=sns.color_palette('coolwarm', 4))
 plt.ylabel('Speed (kmh)')
 plt.xlabel('')
 plt.tight_layout()
@@ -241,7 +248,7 @@ plt.close()
 
 fig, ax = plt.subplots(figsize=(6.5, 5))
 # ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
-sns.barplot(all_metrics_ass, x='link_type_name', y='VOC_mean1', hue='country', palette=sns.color_palette('coolwarm', 4))
+sns.barplot(all_metrics_ass, x='link_type_name', y='VOC_mean', hue='country', palette=sns.color_palette('coolwarm', 4))
 plt.ylabel('VOC')
 plt.xlabel('')
 plt.tight_layout()
