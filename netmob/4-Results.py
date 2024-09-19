@@ -6,6 +6,8 @@ import seaborn as sns
 import glob
 import igraph
 from collections import Counter
+
+from cairosvg.defs import marker
 from tqdm import tqdm
 
 pd.options.mode.chained_assignment = None
@@ -119,7 +121,7 @@ for kk in ['total_trips', 'Total_device', 'PA_count', 'avg_duration', 'avg_dist'
 all_metrics_link = all_metrics.groupby(['country', 'link_type_name'])[['length', 'link_count']].mean().reset_index()
 all_metrics.groupby(['link_type_name'])[['length']].sum() / all_metrics.groupby(['link_type_name'])[
     ['length']].sum().sum()
-all_metrics.groupby(['country','link_type_name'])[['length']].sum() / all_metrics.groupby(['country'])[
+all_metrics.groupby(['country', 'link_type_name'])[['length']].sum() / all_metrics.groupby(['country'])[
     ['length']].sum()
 all_metrics_links = all_metrics_link.groupby(['country'])[['length', 'link_count']].sum().reset_index()
 fig, ax = plt.subplots(figsize=(6.5, 4))
@@ -196,19 +198,24 @@ plt.savefig(r'D:\MDLD_OD\Netmob\results\Link_diff.pdf')
 all_metrics_ass = all_metrics[
     ~((all_metrics['link_type_name'] == 'motorway') & (all_metrics['country'] == 'Colombia'))]
 all_metrics_ass['zero_pct'] = 100 * (all_metrics_ass['zero_length'] / all_metrics_ass['length'])
+all_metrics_ass.groupby(['link_type_name'])['zero_pct'].mean()
+all_metrics_ass.groupby(['country'])['zero_pct'].mean()
 fig, ax = plt.subplots(figsize=(6.5, 5))
 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
 sns.barplot(all_metrics_ass, y='link_type_name', x='zero_pct', hue='country', palette=sns.color_palette('coolwarm', 4),
             orient='h')
-plt.xlabel('Pct. of empty links (%)')
+plt.xlabel('Pct. of inactive links (%)')
 plt.ylabel('')
 plt.tight_layout()
 plt.legend(loc='upper right')
-plt.xlim([0, 140])
+plt.xlim([0, 130])
 plt.savefig(r'D:\MDLD_OD\Netmob\results\Link_diff_type.pdf')
 
 # Relationship with other factors
-corr_features = all_metrics_ass.groupby('country').corr(numeric_only=True, method='pearson')['zero_pct'].reset_index()
+corr_features = all_metrics_ass.groupby(['country', 'link_type_name']).corr(numeric_only=True, method='pearson')[
+    'zero_pct'].reset_index()
+corr_features = corr_features[corr_features['level_2'].isin(['sampling_rate', 'max_comp_v', 'Total_pop', ])]
+corr_features.groupby('link_type_name')['zero_pct'].mean()
 for roadty in set(all_metrics_ass['link_type_name']):
     plot_scatter(all_metrics_ass[all_metrics_ass['link_type_name'] == roadty], 'sampling_rate', 'zero_pct',
                  'Penetration rate', 'Inactive %s ' % roadty + 'roads (%)', False, False)
@@ -225,8 +232,8 @@ for roadty in set(all_metrics_ass['link_type_name']):
     # plt.ylim([0, 1])
 
 ######## 3. Analyze assignment outcome ########
-all_metrics.groupby(['country', 'link_type_name'])[['volume', 'speed','VOC_mean']].mean().reset_index()
-all_metrics.groupby([ 'link_type_name'])[['volume', 'speed','VOC_mean']].mean().reset_index()
+all_metrics.groupby(['country', 'link_type_name'])[['volume', 'speed', 'VOC_mean']].mean().reset_index()
+all_metrics.groupby(['link_type_name'])[['volume', 'speed', 'VOC_mean']].mean().reset_index()
 
 fig, ax = plt.subplots(figsize=(6.5, 5))
 ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
@@ -254,3 +261,55 @@ plt.xlabel('')
 plt.tight_layout()
 plt.savefig(r'D:\MDLD_OD\Netmob\results\VOC.pdf')
 plt.close()
+
+# Get UE curve
+link_networks = pd.DataFrame()
+all_files = glob.glob(r'D:\MDLD_OD\Netmob\Simulation\*')
+city_list = pd.read_excel(r'D:\MDLD_OD\Netmob\City_list.xlsx')
+ue_crs = pd.DataFrame()
+for kk in tqdm(all_files):
+    # kk=all_files[0]
+    e_name = kk.split('\\')[-1].split('_')[0]
+    e_ct = city_list.loc[city_list['Name'] == e_name, 'Country'].values[0]
+    ue_cr = pd.read_csv(r"D:\MDLD_OD\Netmob\Simulation\%s\log_DTA.txt" % e_name, header=None, delimiter="\t")
+    cpu_time = ue_cr[ue_cr[0].str.contains('CPU running time for the entire process')]
+    print(e_name)
+    print(cpu_time.values[1])
+    ue_cr = ue_cr[ue_cr[0].str.contains('DATA INFO')]
+    ue_cr = ue_cr[ue_cr[0].str.contains(r'[DATA INFO] \d+')]
+    ue_cr = ue_cr[~ue_cr[0].str.contains('Cumulative|zone id')]
+    ue_cr = ue_cr[0].str.split(' +', expand=True)
+    ue_cr = ue_cr.loc[:, 2:7]
+    ue_cr.columns = ['Iteration', 'CPU', 'Travel time', 'TT', 'Least', 'UE_Gap']
+    ue_cr['Metro'] = city_list.loc[city_list['Name'] == e_name, 'Metro'].values[0]
+    ue_cr['country'] = e_ct
+    ue_crs = pd.concat([ue_crs, ue_cr], ignore_index=True)
+
+ue_crs['UE_Gap'] = ue_crs['UE_Gap'].astype(float)
+ue_crs['Iteration'] = ue_crs['Iteration'].astype(int)
+metro_pop = all_metrics[['Metro', 'Total_pop', 'Total_device']].drop_duplicates(subset='Metro')
+ue_crs = ue_crs.merge(metro_pop, on='Metro')
+
+fig, ax = plt.subplots(figsize=(6.5, 5))
+sns.lineplot(ue_crs, x='Iteration', y='UE_Gap', hue='country', palette='Set2', marker='o')
+plt.ylabel('UE Gap (%)')
+plt.xlabel('Iteration')
+plt.ylim([0, 15])
+plt.tight_layout()
+plt.savefig(r'D:\MDLD_OD\Netmob\results\UE_Gap.pdf')
+plt.close()
+
+ue_crsl = ue_crs[ue_crs['Iteration'] == 19]
+ue_crsl = ue_crsl[ue_crsl['UE_Gap'] < 0.8]
+plot_scatter(ue_crsl, 'Total_pop', 'UE_Gap', 'Total population', 'UE Gap (%)', x_sci=True, y_sci=True)
+plt.savefig(r'D:\MDLD_OD\Netmob\results\Last_UE_Gap.pdf')
+plt.close()
+
+# fig, ax = plt.subplots(figsize=(6.5, 5))
+# sns.barplot(ue_crsl, y='city', x='UE_Gap', hue='country', orient='h')
+# plt.ylabel('UE Gap (%)')
+# plt.xlabel('Iteration')
+# # plt.ylim([0, 15])
+# plt.tight_layout()
+# plt.savefig(r'D:\MDLD_OD\Netmob\results\UE_Gap.pdf')
+# plt.close()
