@@ -71,7 +71,7 @@ for kk in all_cities[0:1]:
     city_name = shp_layer.loc[kk, 'NAMELSAD']
     Path(r"%s\%s" % (url_r, city_name)).mkdir(parents=True, exist_ok=True)
     print('-------------- %s: Downloading --------------' % city_name)
-    G = ox.graph.graph_from_point(city_center, dist=20 * 1000, dist_type='network', network_type="drive")  # meter
+    G = ox.graph.graph_from_point(city_center, dist=50 * 1000, dist_type='network', network_type="drive")  # meter
     print('No of edges: %s' % G.number_of_edges())
     edge_gpd = ox.convert.graph_to_gdfs(G, nodes=False, edges=True)
     node_gpd = ox.convert.graph_to_gdfs(G, nodes=True, edges=False).reset_index()
@@ -80,14 +80,14 @@ for kk in all_cities[0:1]:
     ox.io.save_graph_xml(G, filepath=ef)
 
     # # Plot network
-    # print('-------------- %s: Plotting --------------' % city_name)
-    # fig, ax = ox.plot.plot_graph(G, node_size=0, show=False, close=False, edge_linewidth=0.6, edge_color='blue',
-    #                              edge_alpha=0.2)
-    # ctx.add_basemap(ax, crs=G.graph['crs'], source=ctx.providers.CartoDB.Positron)
-    # plt.title(city_name)
-    # plt.tight_layout()
-    # plt.savefig(r"%s\%s\%s.png" % (url_r, city_name, city_name), dpi=500)
-    # plt.close()
+    print('-------------- %s: Plotting --------------' % city_name)
+    fig, ax = ox.plot.plot_graph(G, node_size=0, show=False, close=False, edge_linewidth=0.6, edge_color='blue',
+                                 edge_alpha=0.2)
+    ctx.add_basemap(ax, crs=G.graph['crs'], source=ctx.providers.CartoDB.Positron)
+    plt.title(city_name)
+    plt.tight_layout()
+    plt.savefig(r"%s\%s\%s.png" % (url_r, city_name, city_name), dpi=500)
+    plt.close()
 
     # Convert the simulation network
     print('-------------- %s: Converting --------------' % city_name)
@@ -135,8 +135,8 @@ for kk in all_cities[0:1]:
     od_flows = od_flows[['destination', 'origin', 'Flow_w']]
 
     # Merge with DTA
-    node = pd.read_csv(r'%s\%s_node.csv' % (url_r, city_name))
-    link = pd.read_csv(r'%s\%s_link.csv' % (url_r, city_name))
+    node = pd.read_csv(r'%s\%s\%s_node.csv' % (url_r, city_name, city_name))
+    link = pd.read_csv(r'%s\%s\%s_link.csv' % (url_r, city_name, city_name))
     # All link's node should be found in node.csv
     link_node = set(list(set(link['from_node_id'])) + list(set(link['to_node_id'])))
     node_node = set(node['node_id'])
@@ -183,7 +183,7 @@ for kk in all_cities[0:1]:
     # plt.tight_layout()
     # plt.show()
 
-    # Generate setting for DTALite
+    # # Generate setting for DTALite
     assignment_settings = {'number_of_iterations': 20, 'route_output': 0, 'simulation_output': 0,
                            'number_of_cpu_processors': 6, 'length_unit': 'meter', 'speed_unit': 'kmh',
                            'UE_convergence_percentage': 0.001, 'odme_activate': 0}
@@ -210,8 +210,8 @@ for kk in all_cities[0:1]:
     od_flows[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\%s\demand.csv" % (url_r, city_name), index=False)
     node.to_csv(r"%s\%s\node.csv" % (url_r, city_name), index=False)
     link.to_csv(r"%s\%s\link.csv" % (url_r, city_name), index=False)
-
-    # Run assignment
+    #
+    # # Run assignment
     os.chdir(r"%s\%s" % (url_r, city_name))
     subprocess.call([r"%s\%s\DTALite_0602_2024.exe" % (url_r, city_name)])
 
@@ -226,7 +226,7 @@ for kk in all_cities[0:1]:
     aadt[aadt['vehicle_volume'] == 0].plot(ax=ax, alpha=0.3, lw=0.25, color='gray')
     aadtr = aadt[aadt['vehicle_volume'] > 0].reset_index(drop=True)
     aadtr.plot(column='vehicle_volume', cmap='RdYlGn_r', scheme="natural_breaks", k=5, lw=aadtr['cut_jenks'], ax=ax,
-              alpha=0.4, legend=True, legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
+               alpha=0.4, legend=True, legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
     ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
     # plt.subplots_adjust(top=0.99, bottom=0.003, left=0.0, right=1.0, hspace=0.0, wspace=0.0)
     plt.title(city_name)
