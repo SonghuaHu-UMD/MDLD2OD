@@ -53,7 +53,7 @@ for emsa in range(0, 50):
     hourly_visit_avgs = pd.DataFrame()
     hourly_visit_days = pd.DataFrame()
     for file in tqdm(all_files):
-        # Read OD flow: monthly
+        # Read OD flow
         ng_pattern = pd.read_csv(file)
         ng_pattern = ng_pattern.dropna(subset=['AREA']).reset_index(drop=True)
         ng_pattern = ng_pattern[~ng_pattern['AREA'].astype(str).str.contains('[A-Za-z]')].reset_index(drop=True)
