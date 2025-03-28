@@ -25,8 +25,8 @@ def save_settings_yml(filename, assignment_settings, mode_types, demand_periods,
         yaml.dump(settings, file)
 
 
-# url_r = r'G:\Data\Dewey\SAFEGRAPH\Open Census Data\Census Website\2019\\'
-# # Read shapefile
+url_r = r'G:\Data\Dewey\SAFEGRAPH\Open Census Data\Census Website\2019\\'
+# # Read place
 # shp_layer = gpd.read_file(url_r + r'nhgis0011_shape\US_place_2023.shp')
 # shp_layer = shp_layer.to_crs("EPSG:4326")
 # # Read population
@@ -39,13 +39,23 @@ def save_settings_yml(filename, assignment_settings, mode_types, demand_periods,
 # shp_layer['geo_lon'] = shp_layer.geometry.centroid.x  # Longitude
 # shp_layer = shp_layer.sort_values(by=['Country', 'Population'])
 # shp_layer.to_file(r'D:\MDLD_OD\resilience\cities_84.shp')
+## Read tract
+# shp_layer = gpd.read_file(url_r + r'nhgis0011_shape\US_tract_2019.shp')
+# shp_layer = shp_layer.to_crs("EPSG:4326")
+# shp_layer.to_pickle(r'D:\MDLD_OD\resilience\poly_tract_84.pkl')
 
 # Read Cities
 shp_layer = gpd.read_file(r'D:\MDLD_OD\resilience\cities_84.shp')
 shp_layer = shp_layer.sort_values(by=['ASN1E001'], ascending=False).reset_index(drop=True)
+un_st = ['02', '15', '60', '66', '69', '72', '78']
+shp_layer = shp_layer[~shp_layer['STATEFP'].isin(un_st)].reset_index(drop=True)
 # Read CBG
-cbg_layer = pd.read_pickle(r'D:\Hurricane_Helene\Results\poly_cbg_84.pkl')
-cbg_layer['BGFIPS'] = cbg_layer['GEOID'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
+# cbg_layer = pd.read_pickle(r'D:\Hurricane_Helene\Results\poly_cbg_84.pkl')
+# cbg_layer['BGFIPS'] = cbg_layer['GEOID'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
+# Read Census Tract
+cbg_layer = pd.read_pickle(r'D:\MDLD_OD\resilience\poly_tract_84.pkl')
+cbg_layer['BGFIPS'] = cbg_layer['GEOID'].astype('int64').astype(str).apply(lambda x: x.zfill(11))
+
 # Get # of devices
 devices = pd.read_csv(
     r'G:\Data\SafeGraph\Neighbourhood Patterns\neighborhood_home_panel_summary\y=2019\m=5\part-00000-tid-4483054447075143375-997cc666-3832-460a-8831-3e198824ad6e-23887-1-c000.csv')
@@ -61,17 +71,19 @@ devices['devices_ratio'] = devices['devices'] / devices['Total_Population']  # d
 devices = devices[['BGFIPS', 'devices_ratio']]
 
 # all file indexes
-all_cities = list(range(0, 10)) + list(range(100, 110)) + list(range(200, 210)) + list(range(300, 310)) + list(
-    range(400, 410))
+all_cities = list(range(0, 20)) + list(range(100, 120)) + list(range(200, 220)) + list(range(300, 320)) + list(
+    range(400, 420))
 all_ods = glob.glob('G:\Data\Dewey\Advan\\Neighborhood Patterns - US\\*DATE_RANGE_START-2019-05-01.csv.gz')
 url_r = r'D:\MDLD_OD\resilience\road_network'
-for kk in all_cities[0:1]:
+shp_layer.loc[all_cities, ['GEOID', 'NAMELSAD', 'ASN1E001']].to_csv(r'all_cites.csv')
+for kk in all_cities:
     # Get network by distance
     city_center = (shp_layer.loc[kk, 'geo_lat'], shp_layer.loc[kk, 'geo_lon'])
-    city_name = shp_layer.loc[kk, 'NAMELSAD']
+    city_name = str(kk) + '_' + shp_layer.loc[kk, 'NAMELSAD']
     Path(r"%s\%s" % (url_r, city_name)).mkdir(parents=True, exist_ok=True)
+    Path(r"%s\final\%s" % (url_r, city_name)).mkdir(parents=True, exist_ok=True)
     print('-------------- %s: Downloading --------------' % city_name)
-    G = ox.graph.graph_from_point(city_center, dist=50 * 1000, dist_type='network', network_type="drive")  # meter
+    G = ox.graph.graph_from_point(city_center, dist=20 * 1000, dist_type='network', network_type="drive")  # meter
     print('No of edges: %s' % G.number_of_edges())
     edge_gpd = ox.convert.graph_to_gdfs(G, nodes=False, edges=True)
     node_gpd = ox.convert.graph_to_gdfs(G, nodes=True, edges=False).reset_index()
@@ -80,14 +92,14 @@ for kk in all_cities[0:1]:
     ox.io.save_graph_xml(G, filepath=ef)
 
     # # Plot network
-    print('-------------- %s: Plotting --------------' % city_name)
-    fig, ax = ox.plot.plot_graph(G, node_size=0, show=False, close=False, edge_linewidth=0.6, edge_color='blue',
-                                 edge_alpha=0.2)
-    ctx.add_basemap(ax, crs=G.graph['crs'], source=ctx.providers.CartoDB.Positron)
-    plt.title(city_name)
-    plt.tight_layout()
-    plt.savefig(r"%s\%s\%s.png" % (url_r, city_name, city_name), dpi=500)
-    plt.close()
+    # print('-------------- %s: Plotting --------------' % city_name)
+    # fig, ax = ox.plot.plot_graph(G, node_size=0, show=False, close=False, edge_linewidth=0.6, edge_color='blue',
+    #                              edge_alpha=0.2)
+    # ctx.add_basemap(ax, crs=G.graph['crs'], source=ctx.providers.CartoDB.Positron)
+    # plt.title(city_name)
+    # plt.tight_layout()
+    # plt.savefig(r"%s\%s\%s.png" % (url_r, city_name, city_name), dpi=500)
+    # plt.close()
 
     # Convert the simulation network
     print('-------------- %s: Converting --------------' % city_name)
@@ -108,7 +120,7 @@ for kk in all_cities[0:1]:
         ng_pattern = ng_pattern.dropna(subset=['AREA']).reset_index(drop=True)
         ng_pattern = ng_pattern[~ng_pattern['AREA'].astype(str).str.contains('[A-Za-z]')].reset_index(drop=True)
         ng_pattern['AREA'] = ng_pattern['AREA'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
-        ng_pattern = ng_pattern[(ng_pattern['AREA'].isin(need_cbg))].reset_index(drop=True)
+        ng_pattern = ng_pattern[(ng_pattern['AREA'].str[0:11].isin(need_cbg))].reset_index(drop=True)
 
         # Get monthly OD flow
         ng_pattern['DEVICE_HOME_AREAS'] = ng_pattern['DEVICE_HOME_AREAS'].apply(ast.literal_eval).reset_index(drop=True)
@@ -118,7 +130,7 @@ for kk in all_cities[0:1]:
         od_flow = od_flow.dropna(subset=['Origin']).reset_index(drop=True)
         od_flow = od_flow[~od_flow['Origin'].astype(str).str.contains('[A-Za-z]')].reset_index(drop=True)
         od_flow['Origin'] = od_flow['Origin'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
-        od_flow = od_flow[(od_flow['Origin'].isin(need_cbg))].reset_index(drop=True)
+        od_flow = od_flow[(od_flow['Origin'].str[0:11].isin(need_cbg))].reset_index(drop=True)
         od_flows = pd.concat([od_flows, od_flow])
 
     # Weighting
@@ -128,8 +140,13 @@ for kk in all_cities[0:1]:
     devices.columns = ['origin', 'origin_ratio']
     od_flows = od_flows.merge(devices, on='origin')
     od_flows['Flow_w'] = od_flows['Flow'] / ((od_flows['origin_ratio'] + od_flows['destination_ratio']) / 2)
-    od_flows['Flow_w'] = (od_flows['Flow_w'] / 30) * 0.1
-    od_flows = od_flows[od_flows['Flow_w'] > 0.1].reset_index(drop=True)
+    od_flows['Flow_w'] = (od_flows['Flow_w'] / 30) * 0.6
+    # CBG TO TRACT
+    od_flows['origin'] = od_flows['origin'].str[0:11]
+    od_flows['destination'] = od_flows['destination'].str[0:11]
+    od_flows = od_flows.groupby(['destination', 'origin']).sum().reset_index()
+    # Final ODs
+    od_flows = od_flows[od_flows['Flow_w'] > 0.4].reset_index(drop=True)
     cbg_list = set(od_flows['destination']).union(set(od_flows['origin']))
     print('Number of zones: %s' % len(cbg_list))
     od_flows = od_flows[['destination', 'origin', 'Flow_w']]
@@ -176,12 +193,16 @@ for kk in all_cities[0:1]:
     node = node.drop('BGFIPS', axis=1)
 
     ## Plot nodes and links
-    # fig, ax = plt.subplots(figsize=(9, 7))
-    # link.plot(ax=ax, lw=0.2, color='gray', alpha=0.5)
-    # node[~node['zone_id'].isnull()].plot(ax=ax, markersize=10, color='red', alpha=1)
-    # plt.axis('off')
-    # plt.tight_layout()
-    # plt.show()
+    fig, ax = plt.subplots(figsize=(9, 7))
+    link.plot(ax=ax, lw=0.2, color='gray', alpha=0.5)
+    node[~node['zone_id'].isnull()].plot(ax=ax, markersize=10, color='red', alpha=1)
+    plt.title(city_name)
+    ctx.add_basemap(ax, crs=G.graph['crs'], source=ctx.providers.CartoDB.Positron)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(r"%s\%s\%s.png" % (url_r, city_name, city_name), dpi=500)
+    plt.savefig(r"%s\final\%s\%s.png" % (url_r, city_name, city_name), dpi=500)
+    plt.close()
 
     # # Generate setting for DTALite
     assignment_settings = {'number_of_iterations': 20, 'route_output': 0, 'simulation_output': 0,
@@ -198,8 +219,7 @@ for kk in all_cities[0:1]:
          'T0455': 0.005677, 'T0460': 0.005677, 'T0465': 0.005994, 'T0470': 0.005994, 'T0475': 0.005994,
          'T0480': 0.006018}]
     link_type = link.groupby(['link_type', 'link_type_name'])[['free_speed', 'capacity']].mean().reset_index()
-    link_type['traffic_flow_model'] = ['kw', 'spatial_queue', 'spatial_queue', 'point_queue', 'point_queue',
-                                       'point_queue', 'point_queue']
+    link_type['traffic_flow_model'] = ['kw', 'spatial_queue', 'spatial_queue'] + ['point_queue'] * (len(link_type) - 3)
     link_type.columns = ['link_type', 'link_type_name', 'free_speed_auto', 'capacity_auto', 'traffic_flow_model']
     link_types = link_type.to_dict(orient='records')
 
@@ -210,6 +230,9 @@ for kk in all_cities[0:1]:
     od_flows[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\%s\demand.csv" % (url_r, city_name), index=False)
     node.to_csv(r"%s\%s\node.csv" % (url_r, city_name), index=False)
     link.to_csv(r"%s\%s\link.csv" % (url_r, city_name), index=False)
+    od_flows[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\final\%s\demand.csv" % (url_r, city_name), index=False)
+    node.to_csv(r"%s\final\%s\node.csv" % (url_r, city_name), index=False)
+    link.to_csv(r"%s\final\%s\link.csv" % (url_r, city_name), index=False)
     #
     # # Run assignment
     os.chdir(r"%s\%s" % (url_r, city_name))
@@ -233,14 +256,16 @@ for kk in all_cities[0:1]:
     plt.tight_layout()
     plt.axis('off')
     plt.savefig(r'%s\%s\assigned_traffic.png' % (url_r, city_name), dpi=500)
+    plt.savefig(r'%s\final\%s\assigned_traffic.png' % (url_r, city_name), dpi=500)
     plt.close()
 
     fig, ax = plt.subplots(figsize=(6.5, 5))
     sns.set_palette('coolwarm', 7)
-    ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
+    # ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
     sns.barplot(aadt, x='link_type_name', y='vehicle_volume')
     plt.ylabel('Volume')
     plt.xlabel('')
     plt.tight_layout()
     plt.savefig(r'%s\%s\volume_by_roadtype.png' % (url_r, city_name), dpi=500)
+    plt.savefig(r'%s\final\%s\volume_by_roadtype.png' % (url_r, city_name), dpi=500)
     plt.close()
