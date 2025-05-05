@@ -101,7 +101,7 @@ for kk in all_cities:
     # plt.savefig(r"%s\%s\%s.png" % (url_r, city_name, city_name), dpi=500)
     # plt.close()
 
-    # Convert the simulation network
+    # Convert the simulation network using osm2gmns
     print('-------------- %s: Converting --------------' % city_name)
     net = og.getNetFromFile(
         ef, network_types=('auto',), default_lanes=True, default_speed=True, default_capacity=True,
