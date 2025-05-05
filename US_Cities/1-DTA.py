@@ -26,6 +26,7 @@ def save_settings_yml(filename, assignment_settings, mode_types, demand_periods,
 
 
 url_r = r'G:\Data\Dewey\SAFEGRAPH\Open Census Data\Census Website\2019\\'
+
 # # Read place
 # shp_layer = gpd.read_file(url_r + r'nhgis0011_shape\US_place_2023.shp')
 # shp_layer = shp_layer.to_crs("EPSG:4326")
@@ -38,14 +39,14 @@ url_r = r'G:\Data\Dewey\SAFEGRAPH\Open Census Data\Census Website\2019\\'
 # shp_layer['geo_lat'] = shp_layer.geometry.centroid.y  # Latitude
 # shp_layer['geo_lon'] = shp_layer.geometry.centroid.x  # Longitude
 # shp_layer = shp_layer.sort_values(by=['Country', 'Population'])
-# shp_layer.to_file(r'D:\MDLD_OD\resilience\cities_84.shp')
+# shp_layer.to_file(r'D:\GNN_Traffic_Resilience\cities_84.shp')
 ## Read tract
 # shp_layer = gpd.read_file(url_r + r'nhgis0011_shape\US_tract_2019.shp')
 # shp_layer = shp_layer.to_crs("EPSG:4326")
-# shp_layer.to_pickle(r'D:\MDLD_OD\resilience\poly_tract_84.pkl')
+# shp_layer.to_pickle(r'D:\GNN_Traffic_Resilience\poly_tract_84.pkl')
 
 # Read Cities
-shp_layer = gpd.read_file(r'D:\MDLD_OD\resilience\cities_84.shp')
+shp_layer = gpd.read_file(r'D:\GNN_Traffic_Resilience\cities_84.shp')
 shp_layer = shp_layer.sort_values(by=['ASN1E001'], ascending=False).reset_index(drop=True)
 un_st = ['02', '15', '60', '66', '69', '72', '78']
 shp_layer = shp_layer[~shp_layer['STATEFP'].isin(un_st)].reset_index(drop=True)
@@ -53,7 +54,7 @@ shp_layer = shp_layer[~shp_layer['STATEFP'].isin(un_st)].reset_index(drop=True)
 # cbg_layer = pd.read_pickle(r'D:\Hurricane_Helene\Results\poly_cbg_84.pkl')
 # cbg_layer['BGFIPS'] = cbg_layer['GEOID'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
 # Read Census Tract
-cbg_layer = pd.read_pickle(r'D:\MDLD_OD\resilience\poly_tract_84.pkl')
+cbg_layer = pd.read_pickle(r'D:\GNN_Traffic_Resilience\poly_tract_84.pkl')
 cbg_layer['BGFIPS'] = cbg_layer['GEOID'].astype('int64').astype(str).apply(lambda x: x.zfill(11))
 
 # Get # of devices
@@ -74,7 +75,7 @@ devices = devices[['BGFIPS', 'devices_ratio']]
 all_cities = list(range(0, 20)) + list(range(100, 120)) + list(range(200, 220)) + list(range(300, 320)) + list(
     range(400, 420))
 all_ods = glob.glob('G:\Data\Dewey\Advan\\Neighborhood Patterns - US\\*DATE_RANGE_START-2019-05-01.csv.gz')
-url_r = r'D:\MDLD_OD\resilience\road_network'
+url_r = r'D:\GNN_Traffic_Resilience\road_network'
 shp_layer.loc[all_cities, ['GEOID', 'NAMELSAD', 'ASN1E001']].to_csv(r'all_cites.csv')
 for kk in all_cities:
     # Get network by distance
@@ -233,7 +234,7 @@ for kk in all_cities:
     od_flows[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\final\%s\demand.csv" % (url_r, city_name), index=False)
     node.to_csv(r"%s\final\%s\node.csv" % (url_r, city_name), index=False)
     link.to_csv(r"%s\final\%s\link.csv" % (url_r, city_name), index=False)
-    #
+
     # # Run assignment
     os.chdir(r"%s\%s" % (url_r, city_name))
     subprocess.call([r"%s\%s\DTALite_0602_2024.exe" % (url_r, city_name)])
