@@ -27,17 +27,6 @@ def save_settings_yml(filename, assignment_settings, mode_types, demand_periods,
         yaml.dump(settings, file)
 
 
-# Calculate heading (bearing)
-def calculate_heading(line):
-    start = line.coords[0]
-    end = line.coords[-1]
-    heading_degrees = np.degrees(np.arctan2(end[0] - start[0], end[1] - start[1]))
-    # Normalize heading to range [0, 360]
-    if heading_degrees < 0:
-        heading_degrees += 360
-    return heading_degrees
-
-
 # set default parameters
 default_link_dict = {"motorway": 1, "trunk": 2, "primary": 3, "secondary": 4, "tertiary": 5, "residential": 6,
                      "unclassified": 20, 'connector': 99}
@@ -50,6 +39,7 @@ default_capacity_dict = {'motorway': 2300, 'trunk': 2200, 'primary': 1800, 'seco
 defaults_all = pd.DataFrame([default_lanes_dict, default_speed_dict, default_capacity_dict, default_link_dict]).T
 defaults_all = defaults_all.reset_index()
 defaults_all.columns = ['link_type_name', 'lanes_default', 'speed_default', 'capacity_default', 'link_type_default']
+
 fips_to_abbr = {'01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT', '10': 'DE',
                 '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID', '17': 'IL', '18': 'IN', '19': 'IA',
                 '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME', '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN',
@@ -60,10 +50,12 @@ fips_to_abbr = {'01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08'
 F_System_dict = {1: "Interstate", 2: "Principal Arterial – Other Freeways and Expressways",
                  3: "Principal Arterial – Other", 4: "Minor Arterial", 5: "Major Collector", 6: "Minor Collector",
                  7: "Local"}
+F_System_to_osm = {1: "motorway", 2: "trunk", 3: "primary", 4: "secondary", 5: "residential", 6: "residential",
+                   7: "residential"}
 un_st = ['02', '15', '60', '66', '69', '72', '78']
-
-# Assignment unit: census track (CTR) or census block group (CBG)
-s_unit = 'CTR'
+s_unit = 'CTR'  # Assignment unit: census track (CTR) or census block group (CBG)
+network_source = 'OSM'  # Whether road network sources from OSM or FHWA
+ODME = 0
 
 ############# 1. Read raw shapefile and regional data #############
 # Read CBSA
@@ -115,7 +107,7 @@ for emsa in range(0, 100):
     Path(r"D:\MDLD_OD\MDLDod\raw_data\%s" % msa_name).mkdir(parents=True, exist_ok=True)
     print("------------------- Start processing MSA: %s -----------------" % msa_name)
 
-    ########## 1. Get the center county of CBSA based on highest population density ##########
+    # Get the center county of CBSA based on highest population density
     smart_loc_m = smart_loc.loc[smart_loc['CBSA_Name'] == msa_name, ['BGFIPS', 'TotPop', 'Ac_Land']]
     smart_loc_m['CTFIPS'] = smart_loc['BGFIPS'].str[0:5]
     smart_loc_m = smart_loc_m.groupby(['CTFIPS']).sum().reset_index()
@@ -124,7 +116,7 @@ for emsa in range(0, 100):
     CT_geo_m = CT_geo.loc[CT_geo['GEOID'] == smart_loc_m.head(1)['CTFIPS'].item(), :]
     msa_center = (CT_geo_m['centroid_lat'].item(), CT_geo_m['centroid_lon'].item())
 
-    # 2. Get simulation network based on driving distance from CBSA center
+    # 1. Get simulation network based on driving distance from CBSA center
     print('-------------- %s: Downloading Network--------------' % msa_name)
     G = ox.graph.graph_from_point(msa_center, dist=48.2803 * 1000, dist_type='network', network_type="drive")  # 30 mile
     print('No of edges: %s' % G.number_of_edges())
@@ -139,24 +131,110 @@ for emsa in range(0, 100):
     need_cbg = set(SInBG['BGFIPS'])
     need_st = set(SInBG['STATEFP'])
 
-    # Convert the simulation network using osm2gmns
-    print('-------------- %s: Converting Network--------------' % msa_name)
-    net = og.getNetFromFile(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
-    net = og.fillLinkAttributesWithDefaultValues(net)
-    og.outputNetToCSV(net, output_folder=r"D:\MDLD_OD\MDLDod\raw_data\%s" % msa_name)
+    if network_source == 'OSM':
+        # Convert the simulation network using osm2gmns
+        print('-------------- %s: Converting Network--------------' % msa_name)
+        net = og.getNetFromFile(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
+        og.outputNetToCSV(net, output_folder=r"D:\MDLD_OD\MDLDod\raw_data\%s" % msa_name)
+    elif network_source == 'FHWA':
+        # Get road network based on state name: may cover multiple states
+        abbr_list = [fips_to_abbr.get(str(f).zfill(2), None) for f in need_st]
+        all_network = []
+        for st_abb in abbr_list:
+            state_network = pd.read_pickle(r'D:\MDLD_OD\Volume\HPMS_2020\HPMS_FULL_%s_2020.pkl' % st_abb)
+            state_network = state_network.reset_index()
+            SInBG = gpd.sjoin(state_network, boundary_gpd, how='inner', predicate='intersects').reset_index(drop=True)
+            state_network = state_network[state_network['index'].isin(SInBG['index'])].reset_index(drop=True)
+            # state_network.plot()
+            all_network.append(state_network)
+        all_network = pd.concat(all_network, ignore_index=True)
+        all_network.drop(['index'], axis=1, inplace=True)
+        all_network = all_network.explode(index_parts=False).reset_index(drop=True)
+        all_network = all_network.drop_duplicates(subset=['geometry']).reset_index(drop=True)
+
+        # generate node id
+        all_network['from_point'] = all_network.geometry.apply(lambda x: Point(x.coords[0]))
+        all_network['to_point'] = all_network.geometry.apply(lambda x: Point(x.coords[-1]))
+        all_points = pd.concat([all_network['from_point'], all_network['to_point']]).reset_index(drop=True)
+        unique_points = all_points.drop_duplicates().reset_index(drop=True)
+        unique_points_gdf = gpd.GeoDataFrame(geometry=unique_points)
+        unique_points_gdf['node_id'] = unique_points_gdf.index
+        point_to_id = dict(zip(unique_points_gdf.geometry, unique_points_gdf['node_id']))
+        all_network['from_node'] = all_network['from_point'].map(point_to_id)
+        all_network['to_node'] = all_network['to_point'].map(point_to_id)
+
+        # duplicates = all_network[all_network.duplicated(subset=['from_point', 'to_point'], keep=False)]
+        # all_network.to_csv(r'test.csv')
+
+        # split each two-way road into two one-way roads
+        # all_network['FACILITY_TYPE'].value_counts(): 2 is two-way
+        # all_network['THROUGH_LANES'].value_counts()
+        for rr in ['THROUGH_LANES', 'AADT']:
+            all_network.loc[all_network['FACILITY_TYPE'] == 2, rr] = (
+                    all_network.loc[all_network['FACILITY_TYPE'] == 2, rr] / 2)
+        two_way = all_network[all_network['FACILITY_TYPE'] == 2].copy()
+        two_way['geometry'] = two_way['geometry'].apply(lambda geom: LineString(list(geom.coords)[::-1]))
+        two_way['from_node'], two_way['to_node'] = (two_way['to_node'], two_way['from_node'])
+        two_way['is_reverse'] = True
+        all_network['is_reverse'] = False
+        all_network = pd.concat([all_network, two_way], ignore_index=True).reset_index(drop=True).reset_index()
+
+        # all_network.to_csv(r'test.csv')
+
+        # all_network[['from_node', 'to_node']].drop_duplicates()
+
+        # format as dta
+        all_network = all_network[['index', 'Route_ID', 'from_node', 'to_node', 'is_reverse',
+                                   'F_SYSTEM', 'geometry', 'THROUGH_LANES', 'SPEED_LIMIT', 'AADT']]
+        # all_network.isnull().sum()
+        # all_network['F_SYSTEM'].value_counts()
+        # all_network.groupby(['F_SYSTEM'])[['AADT', 'THROUGH_LANES']].mean()
+        all_network = all_network.to_crs(epsg=3857)
+        all_network['length'] = all_network.geometry.length  # meter
+        all_network = all_network.to_crs(epsg=4326)
+        all_network['directed'] = 1
+        all_network['dir_flag'] = 1
+        all_network['facility_type'] = all_network['F_SYSTEM'].map(F_System_to_osm)
+        all_network['link_id'] = all_network['index']
+        all_network['from_node_id'] = all_network['from_node']
+        all_network['to_node_id'] = all_network['to_node']
+        all_network['name'] = all_network['Route_ID']
+        all_network['osm_way_id'] = ''
+        all_network['allowed_uses'] = 'auto'
+        all_network[['link_id', 'name', 'osm_way_id', 'from_node_id', 'to_node_id', 'directed', 'geometry', 'dir_flag',
+                     'length', 'facility_type', 'allowed_uses', 'THROUGH_LANES']].to_csv(
+            r'D:\MDLD_OD\MDLDod\raw_data\%s\link.csv' % msa_name, index=False)
+
+        unique_points_gdf['y_coord'] = unique_points_gdf.geometry.y
+        unique_points_gdf['x_coord'] = unique_points_gdf.geometry.x
+        unique_points_gdf['name'] = ''
+        unique_points_gdf['osm_node_id'] = ''
+        unique_points_gdf['ctrl_type'] = ''
+        unique_points_gdf['is_boundary'] = ''
+        unique_points_gdf['activity_type'] = ''
+        unique_points_gdf['poi_id'] = ''
+        unique_points_gdf['zone_id'] = np.nan
+        unique_points_gdf[['name', 'node_id', 'osm_node_id', 'ctrl_type', 'x_coord', 'y_coord', 'is_boundary',
+                           'activity_type', 'poi_id', 'zone_id']].to_csv(
+            r'D:\MDLD_OD\MDLDod\raw_data\%s\node.csv' % msa_name, index=False)
 
     # Add additional features to links
     node = pd.read_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\node.csv' % msa_name)
     link = pd.read_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\link.csv' % msa_name, on_bad_lines='skip')
     link.rename({'facility_type': 'link_type_name'}, axis=1, inplace=True)
-    # print(link['link_type_name'].value_counts())
+    print(link['link_type_name'].value_counts())
 
     # Reassign speed, capacity, and lanes
     link = link.merge(defaults_all, on='link_type_name')
     link['link_type'] = link['link_type_default']
-    link['lanes'] = link['lanes_default']
+    if network_source == 'OSM':
+        link['lanes'] = link['lanes_default']
+    elif network_source == 'FHWA':
+        link['lanes'] = link['THROUGH_LANES']
+        link['lanes'] = link.groupby('link_type')['THROUGH_LANES'].transform(lambda x: x.fillna(x.mean()))
+        link.drop(['THROUGH_LANES'], axis=1, inplace=True)
     link['free_speed'] = link['speed_default']
-    link['capacity'] = link['capacity_default']  # TODO: Check with Dr. Zhou
+    link['capacity'] = link['capacity_default']
     # link['capacity'] = link['capacity'] * link['lanes']
     link = link.drop(['lanes_default', 'speed_default', 'capacity_default', 'link_type_default'], axis=1)
 
@@ -172,7 +250,7 @@ for emsa in range(0, 100):
     link["geometry"] = gpd.GeoSeries.from_wkt(link["geometry"])
     link = gpd.GeoDataFrame(link, geometry='geometry', crs='EPSG:4326')
 
-    ########## 2. Prepare raw OD data from MPLD ##########
+    # 2. Get OD data
     od_flows = []
     hourly_flows = []
     for file in tqdm(all_od_files):
@@ -213,7 +291,6 @@ for emsa in range(0, 100):
         hourly_visit = hourly_visit_st.groupby(['AREA', 'Datetime'])['visits'].sum().reset_index()
         hourly_flows.append(hourly_visit)
 
-    # Output raw OD info
     od_flows = pd.concat(od_flows, ignore_index=True)
     od_flows.columns = ['destination', 'origin', 'monthly_total']
     od_flows = od_flows.groupby(['destination', 'origin']).sum().reset_index()
@@ -231,7 +308,8 @@ for emsa in range(0, 100):
     pa_flows.columns = ['BGFIPS', 'attraction']
     msa_t_geo = CBG_geo.merge(pa_flows, on='BGFIPS')
     msa_t_geo = msa_t_geo.to_crs('EPSG:3857')
-    msa_t_geo['attraction_density'] = msa_t_geo['attraction'] / (msa_t_geo.area * 0.000247105)  # to acre
+    msa_t_geo['area'] = msa_t_geo.area
+    msa_t_geo['attraction_density'] = msa_t_geo['attraction'] / (msa_t_geo['area'] * 0.000247105)  # to acre
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(9, 6))
     msa_t_geo.plot(column='attraction_density', ax=ax, legend=True, scheme='natural_breaks', cmap='coolwarm', k=9,
                    legend_kwds={'labelcolor': 'k', "fmt": "{:.2f}", 'ncol': 3, 'title': '', 'loc': 'lower center',
@@ -245,7 +323,6 @@ for emsa in range(0, 100):
     plt.savefig(r'%s\%s\trip_density.pdf' % (url_r, msa_name))
     plt.close()
 
-    ########## 3. Weight raw OD data in space and time ##########
     # Population weighting
     od_flows.columns = ['destination', 'origin', 'Flow']
     device_ratio.columns = ['destination', 'destination_ratio']
@@ -254,7 +331,7 @@ for emsa in range(0, 100):
     od_flows = od_flows.merge(device_ratio, on='origin')
     od_flows['Flow_w'] = od_flows['Flow'] / ((od_flows['origin_ratio'] + od_flows['destination_ratio']) / 2)
 
-    # Hour weighting: covert monthly total to hour (7-8 am, weekday)
+    # Hour weighting: covert monthly total to hour
     hourly_flows['hourly_ratio'] = hourly_flows['hourly_flow'] / hourly_flows.groupby(['destination'])[
         'hourly_flow'].transform('sum')
     hourly_ratio = hourly_flows[
@@ -279,7 +356,6 @@ for emsa in range(0, 100):
     print('Number of zones: %s' % len(cbg_list))
     od_flows = od_flows[['destination', 'origin', 'Flow_w']]
 
-    ########## 3. Reformat OD and network data to align with DTALite ##########
     # Change zone id from CBFIPS to int
     zone_ids = pd.DataFrame({'destination': list(cbg_list), 'd_zone_id': range(0, len(cbg_list))})
     od_flows = od_flows.merge(zone_ids, on='destination')
@@ -289,7 +365,7 @@ for emsa in range(0, 100):
     od_flows.columns = ['volume', 'd_zone_id', 'o_zone_id']
     zone_ids.columns = ['BGFIPS', 'zone_id']
 
-    # Node and CBG join: assign zone id (CBG) to node; connect to the link with the highest class
+    # Node and CBG join: assign zone id (CBG) to node; connect to link with the highest class
     cbg_need = CBG_geo[CBG_geo['BGFIPS'].isin(cbg_list)].reset_index(drop=True)
     cbg_need = cbg_need.to_crs('EPSG:4326')
     SInBG = gpd.sjoin(node, cbg_need, how='inner', predicate='within').reset_index(drop=True)
@@ -308,7 +384,21 @@ for emsa in range(0, 100):
     node = node.merge(zone_ids, on='BGFIPS', how='left')
     node = node.drop('BGFIPS', axis=1)
 
-    ## Plot zones and links
+    # Prepare ODME files: sensor data
+    if ODME == 1:
+        all_sensor = all_network[['Route_ID', 'facility_type', 'from_node_id', 'to_node_id', 'AADT']]
+        all_sensor = all_sensor.dropna(subset='AADT').reset_index(drop=True)
+        all_sensor['count'] = all_sensor['AADT'] * p_ratio
+        all_sensor = all_sensor.drop_duplicates(subset=['Route_ID']).reset_index(drop=True).reset_index()
+        all_sensor['sensor_id'] = all_sensor['index']
+        all_sensor['scenario_index'] = 0
+        all_sensor['activate'] = 1
+        all_sensor['demand_period'] = 'AM'
+        all_sensor[
+            ['sensor_id', 'from_node_id', 'to_node_id', 'count', 'scenario_index', 'activate', 'demand_period']].to_csv(
+            r"%s\%s\sensor_data.csv" % (url_r, msa_name), index=False)
+
+    ## Plot nodes and links
     fig, ax = plt.subplots(figsize=(9, 7))
     link.plot(ax=ax, lw=0.2, color='gray', alpha=0.5)
     node[~node['zone_id'].isnull()].plot(ax=ax, markersize=5, color='red', alpha=1)
@@ -319,110 +409,15 @@ for emsa in range(0, 100):
     plt.savefig(r"%s\%s\node_link.png" % (url_r, msa_name), dpi=500)
     plt.close()
 
-    ########## 4. Prepare ODME files: sensor data from FHWA AADT ##########
-    # Get AADT based on state name: may cover multiple states
-    abbr_list = [fips_to_abbr.get(str(f).zfill(2), None) for f in need_st]
-    all_aadt = []
-    for st_abb in abbr_list:
-        state_network = pd.read_pickle(r'D:\MDLD_OD\Volume\HPMS_2020\HPMS_FULL_%s_2020.pkl' % st_abb)
-        state_network = state_network.reset_index()
-        SInBG = gpd.sjoin(state_network, boundary_gpd, how='inner', predicate='intersects').reset_index(drop=True)
-        state_network = state_network[state_network['index'].isin(SInBG['index'])].reset_index(drop=True)
-        all_aadt.append(state_network)
-    all_aadt = pd.concat(all_aadt, ignore_index=True)
-    all_aadt.drop(['index'], axis=1, inplace=True)
-    all_aadt = all_aadt.explode(index_parts=False).reset_index(drop=True)
-    all_aadt = all_aadt.drop_duplicates(subset=['F_SYSTEM', 'geometry', 'AADT'])
-    all_aadt = all_aadt.dropna(subset='AADT').reset_index(drop=True)
-
-    # Split each two-way road into two one-way roads
-    for rr in ['THROUGH_LANES', 'AADT']:
-        all_aadt.loc[all_aadt['FACILITY_TYPE'] == 2, rr] = (all_aadt.loc[all_aadt['FACILITY_TYPE'] == 2, rr] / 2)
-    two_way = all_aadt[all_aadt['FACILITY_TYPE'] == 2].copy()
-    two_way['geometry'] = two_way['geometry'].apply(lambda geom: LineString(list(geom.coords)[::-1]))
-    all_aadt = pd.concat([all_aadt, two_way], ignore_index=True).reset_index(drop=True).reset_index()
-    all_aadt.rename({'index': 'fhwa_id'}, axis=1, inplace=True)
-
-    # AADT --> OSM based on distance, heading, and road type
-    # Calculate heading
-    link['heading'] = link['geometry'].apply(calculate_heading)
-    all_aadt['heading'] = all_aadt['geometry'].apply(calculate_heading)
-
-    # Generate a buffer (5 meter distance)
-    link = link.to_crs('EPSG:3857')
-    all_aadt = all_aadt.to_crs('EPSG:3857')
-    link['buffer'] = link.geometry.buffer(5)
-    dta_bf = gpd.GeoDataFrame(link[['link_id', 'buffer', 'heading', 'link_type_name']], geometry='buffer', crs=link.crs)
-    osm_fhwa_ty = {'motorway': [1, 2], 'trunk': [1, 2], 'primary': [2, 3], 'secondary': [3, 4],
-                   'tertiary': [4, 5, 6, 7], 'residential': [4, 5, 6, 7]}
-    valid_linkss = []
-    for ty in ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential']:
-        dta_bf_t = dta_bf[dta_bf['link_type_name'] == ty]
-        all_aadt_t = all_aadt[all_aadt['F_SYSTEM'].isin(osm_fhwa_ty[ty])]
-        join_link = gpd.sjoin(dta_bf_t, all_aadt_t[['geometry', 'fhwa_id', 'heading', 'Route_ID', 'AADT']],
-                              predicate='intersects')
-        join_link = join_link.merge(all_aadt_t[['geometry', 'fhwa_id']], on='fhwa_id')
-        join_link = join_link.merge(link[['geometry', 'link_id']], on='link_id')
-        join_link['distance'] = join_link.apply(lambda row: row['geometry_x'].distance(row['geometry_y']), axis=1)
-
-        valid_links = join_link[(np.abs(join_link['heading_left'] - join_link['heading_right']) < 10)]
-        valid_links = valid_links.loc[valid_links.groupby(valid_links.link_id)['distance'].idxmin()]
-        valid_links = valid_links[['link_id', 'fhwa_id', 'Route_ID', 'AADT']]
-        valid_linkss.append(valid_links)
-    valid_linkss = pd.concat(valid_linkss, ignore_index=True)
-    link = link.merge(valid_linkss, on=['link_id'], how='left')
-    link = link.to_crs('EPSG:4326')
-    all_aadt = all_aadt.to_crs('EPSG:4326')
-
-    # Plot matched outcomes
-    fig, ax = plt.subplots(figsize=(12, 7), nrows=1, ncols=2, sharex=True, sharey=True)
-    aadt_match = link.copy()
-    aadt_match[aadt_match['AADT'].isnull()].plot(ax=ax[0], alpha=0.3, lw=0.25, color='gray')
-    aadtr = aadt_match[aadt_match['AADT'] > 0].reset_index(drop=True)
-    binning = mapclassify.NaturalBreaks(aadtr['AADT'], k=5)  # NaturalBreaks
-    aadtr['cut_jenks'] = (binning.yb + 1) * 0.5
-    aadtr.plot(column='AADT', cmap='RdYlGn_r', scheme="natural_breaks", k=5, lw=aadtr['cut_jenks'], ax=ax[0],
-               alpha=0.4, legend=True, legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
-    ax[0].set_title('AADT (matched to OSM)')
-    ax[0].axis('off')
-
-    binning = mapclassify.NaturalBreaks(all_aadt['AADT'], k=5)  # NaturalBreaks
-    all_aadt['cut_jenks'] = (binning.yb + 1) * 0.5
-    all_aadt.plot(column='AADT', cmap='RdYlGn_r', scheme="natural_breaks", k=5, lw=all_aadt['cut_jenks'], ax=ax[1],
-                  alpha=0.4, legend=True,
-                  legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
-    ax[1].set_title('AADT (FHWA)')
-    ax[1].axis('off')
-    # ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
-    plt.title(msa_name)
-    plt.tight_layout()
-    plt.savefig(r'%s\%s\AADT.pdf' % (url_r, msa_name))
-    plt.close()
-
-    # Generate sensors
-    all_sensor = link[['Route_ID', 'link_type_name', 'from_node_id', 'to_node_id', 'AADT']]
-    all_sensor = all_sensor.dropna(subset='AADT').reset_index(drop=True)
-    all_sensor['count'] = all_sensor['AADT'] * p_ratio
-    all_sensor = all_sensor.drop_duplicates(subset=['Route_ID']).reset_index(drop=True)
-    all_sensor = pd.concat([all_sensor[all_sensor['link_type_name'].isin(['motorway', 'secondary', 'primary'])],
-                            all_sensor[all_sensor['link_type_name'].isin(['residential', 'tertiary'])].sample(
-                                frac=0.2)], axis=0).reset_index(drop=True).reset_index()
-    all_sensor['sensor_id'] = all_sensor['index']
-    all_sensor['scenario_index'] = 0
-    all_sensor['activate'] = 1
-    all_sensor['demand_period'] = 'AM'
-    all_sensor[['sensor_id', 'from_node_id', 'to_node_id', 'count', 'scenario_index', 'activate',
-                'demand_period']].to_csv(r"%s\%s\sensor_data.csv" % (url_r, msa_name), index=False)
-
-    ########## 5. Generate setting for DTALite: A quick run to determine total weight ##########
-    assignment_settings = {'number_of_iterations': 2, 'route_output': 0, 'simulation_output': 0,
+    ## Generate setting for DTALite: A quick run to determine total weight
+    assignment_settings = {'number_of_iterations': 5, 'route_output': 0, 'simulation_output': 0,
                            'number_of_cpu_processors': 8, 'length_unit': 'meter', 'speed_unit': 'kmh',
                            'UE_convergence_percentage': 0.01, 'odme_activate': 0}
     mode_types = [{'mode_type': 'auto', 'vot': 10, 'person_occupancy': 1, 'pce': 1}]
     demand_periods = [{'period': 'AM', 'time_period': '0700_0800'}]
     demand_files = [{'file_sequence_no': 1, 'file_name': 'demand.csv', 'demand_period': 'am', 'mode_type': 'auto',
                      'format_type': 'column', 'scale_factor': 1, 'departure_time_profile_no': 1}]
-    subarea = [{'activate': 1, 'subarea_geometry': CT_geo_m.geometry.convex_hull.item().wkt}]  # TODO: Check
+    subarea = [{'activate': 1, 'subarea_geometry': CT_geo_m.geometry.convex_hull.item().wkt}]
     departure_time_profiles = [
         {'departure_time_profile_no': 1, 'time_period': '0700_0800', 'T0420': 0.005002, 'T0425': 0.005020,
          'T0430': 0.005002, 'T0435': 0.005207, 'T0440': 0.005207, 'T0445': 0.005207, 'T0450': 0.005677,
@@ -434,47 +429,27 @@ for emsa in range(0, 100):
     link_types = link_type.to_dict(orient='records')
 
     # Output
-    shutil.copy2(r'D:\MDLD_OD\TAPLite_0515_2025.exe', r"%s\%s" % (url_r, msa_name))
+    shutil.copy2(r'D:\MDLD_OD\DTALite_0602_2024.exe', r"%s\%s" % (url_r, msa_name))
     save_settings_yml(r"%s\%s\settings.yml" % (url_r, msa_name), assignment_settings, mode_types,
                       demand_periods, demand_files, subarea, link_types, departure_time_profiles)
     od_flows[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\%s\demand.csv" % (url_r, msa_name), index=False)
     node.to_csv(r"%s\%s\node.csv" % (url_r, msa_name), index=False)
-    link[['link_id', 'name', 'osm_way_id', 'from_node_id', 'to_node_id', 'directed', 'geometry', 'dir_flag', 'length',
-          'link_type_name', 'link_type', 'free_speed', 'lanes', 'capacity', 'allowed_uses']].to_csv(
-        r"%s\%s\link.csv" % (url_r, msa_name), index=False)
+    link.to_csv(r"%s\%s\link.csv" % (url_r, msa_name), index=False)
     zone_ids.to_csv(r"%s\%s\zone_id.csv" % (url_r, msa_name), index=False)
 
     # Run assignment
     os.chdir(r"%s\%s" % (url_r, msa_name))
-    subprocess.call([r"%s\%s\TAPLite_0515_2025.exe" % (url_r, msa_name)])
-
-    ########## 6. Calculate total weighting and rerun the DTALite with ODME ##########
-    assign_all_bf = pd.read_csv(r'%s\%s\link_performance.csv' % (url_r, msa_name))
-    assign_all_bf = assign_all_bf.merge(link[['link_id', 'AADT']], on='link_id', how='left')
-    assign_all_bf[['AADT', 'vehicle_volume']].corr()
-    tt_weight = (all_aadt['AADT'].sum() * p_ratio / assign_all['vehicle_volume'].sum())
-    od_flows_w = od_flows.copy()
-    od_flows_w['volume'] = od_flows_w['volume'] * tt_weight
-    pre_ttod = od_flows_w['volume'].sum()
-    od_flows_w = od_flows_w[od_flows_w['volume'] > 0.3].reset_index(drop=True)
-    post_ttod = od_flows_w['volume'].sum()
-    print('Total loss od (pct): %.5f' % (100*(post_ttod-pre_ttod)/pre_ttod))
-
-    # Run again with ODME
-    assignment_settings = {'number_of_iterations': 15, 'route_output': 0, 'simulation_output': 0,
-                           'number_of_cpu_processors': 8, 'length_unit': 'meter', 'speed_unit': 'kmh',
-                           'UE_convergence_percentage': 0.01, 'odme_activate': 1}
-    save_settings_yml(r"%s\%s\settings.yml" % (url_r, msa_name), assignment_settings, mode_types,
-                      demand_periods, demand_files, subarea, link_types, departure_time_profiles)
-    od_flows_w[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\%s\demand.csv" % (url_r, msa_name), index=False)
     subprocess.call([r"%s\%s\DTALite_0602_2024.exe" % (url_r, msa_name)])
 
+    # calculate total weighting
     assign_all = pd.read_csv(r'%s\%s\link_performance.csv' % (url_r, msa_name))
     assign_all['vehicle_volume'] = assign_all['vehicle_volume'].fillna(0)
-    assign_all = assign_all.merge(link[['link_id', 'AADT']], on='link_id', how='left')
-    assign_all[['AADT', 'vehicle_volume']].corr()
+    assign_all = assign_all.merge(all_network[['link_id', 'AADT']], on='link_id', how='left')
+    assign_all['AADT'] = assign_all['AADT'] * p_ratio
 
     # Plot link performance
+    assign_all = pd.read_csv(r'%s\%s\link_performance.csv' % (url_r, msa_name))
+    assign_all['vehicle_volume'] = assign_all['vehicle_volume'].fillna(0)
     binning = mapclassify.NaturalBreaks(assign_all['vehicle_volume'], k=5)  # NaturalBreaks
     assign_all['cut_jenks'] = (binning.yb + 1) * 0.5
     aadt = link.merge(assign_all[['from_node_id', 'to_node_id', 'cut_jenks', 'vehicle_volume', 'speed_kmph']],
@@ -492,7 +467,6 @@ for emsa in range(0, 100):
     plt.savefig(r'%s\%s\assigned_traffic.pdf' % (url_r, msa_name))
     plt.close()
 
-    aadt['AADT_hour'] = aadt['AADT'] * p_ratio
     fig, ax = plt.subplots(figsize=(6.5, 5))
     sns.set_palette('coolwarm', 7)
     # ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0), useMathText=True)
@@ -501,10 +475,4 @@ for emsa in range(0, 100):
     plt.xlabel('')
     plt.tight_layout()
     plt.savefig(r'%s\%s\volume_by_roadtype.png' % (url_r, msa_name), dpi=500)
-    plt.close()
-
-    fig, ax = plt.subplots(figsize=(5, 5))
-    sns.regplot(data=aadt, x='AADT_hour', y='vehicle_volume', ax=ax, scatter_kws={'alpha': 0.4, 's': 10})
-    plt.tight_layout()
-    plt.savefig(r'%s\%s\volume_by_aadt.png' % (url_r, msa_name), dpi=500)
     plt.close()

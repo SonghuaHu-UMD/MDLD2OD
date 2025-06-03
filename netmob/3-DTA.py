@@ -18,8 +18,6 @@ import pygeohash as pgh
 import igraph
 from functools import reduce
 
-from IPython.core.pylabtools import figsize
-
 plt.rcParams.update(
     {'font.size': 15, 'font.family': "serif", 'mathtext.fontset': 'dejavuserif', 'xtick.direction': 'in',
      'xtick.major.size': 0.5, 'grid.linestyle': "--", 'axes.grid': True, "grid.alpha": 1, "grid.color": "#cccccc",
