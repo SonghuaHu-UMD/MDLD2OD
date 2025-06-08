@@ -343,7 +343,7 @@ for emsa in range(0, 100):
     SInBG_index = SInBG_index.merge(node_speed, on='node_id', how='left')
     SInBG_index = SInBG_index.sort_values(by=['zone_id', 'node_cap'], ascending=False)
     # S_indexf = SInBG_index.groupby('zone_id').sample(n=5, random_state=42, replace=True)[['node_id', 'zone_id']]
-    S_indexf = SInBG_index.groupby('zone_id').head(1)[['node_id', 'zone_id']]
+    S_indexf = SInBG_index.groupby('zone_id').head(3)[['node_id', 'zone_id']]
     S_indexf = S_indexf.drop_duplicates()
 
     # Generate connector
@@ -450,6 +450,7 @@ for emsa in range(0, 100):
     # Generate a buffer (5 meter distance)
     link = link.to_crs('EPSG:3857')
     all_aadt = all_aadt.to_crs('EPSG:3857')
+    all_aadt['aadt_length'] = all_aadt['geometry'].length
     link['buffer'] = link.geometry.buffer(5)
     dta_bf = gpd.GeoDataFrame(link[['link_id', 'buffer', 'heading', 'facility_type']], geometry='buffer', crs=link.crs)
     osm_fhwa_ty = {'motorway': [1, 2], 'trunk': [1, 2], 'primary': [2, 3], 'secondary': [3, 4],
@@ -494,13 +495,15 @@ for emsa in range(0, 100):
     ax[1].axis('off')
     # ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
     plt.tight_layout()
-    plt.savefig(r'%s\%s\AADT.pdf' % (url_r, msa_name))
+    plt.savefig(r'%s\%s\AADT_matched.pdf' % (url_r, msa_name))
     plt.close()
 
     # Generate sensors
     all_sensor = link[['Route_ID', 'facility_type', 'from_node_id', 'to_node_id', 'AADT']]
     all_sensor = all_sensor.dropna(subset='AADT').reset_index(drop=True)
     all_sensor['count'] = all_sensor['AADT'] * p_ratio
+    all_sensor_s = all_sensor[['from_node_id', 'to_node_id', 'count']]
+    all_sensor_s.columns = ['from_node_id', 'to_node_id', 'obs_volume']
     all_sensor = all_sensor.drop_duplicates(subset=['Route_ID']).reset_index(drop=True)
     all_sensor = pd.concat([all_sensor[all_sensor['facility_type'].isin(['motorway', 'secondary', 'primary'])],
                             all_sensor[all_sensor['facility_type'].isin(['residential', 'tertiary'])].sample(
@@ -511,6 +514,7 @@ for emsa in range(0, 100):
     all_sensor['demand_period'] = 'AM'
     all_sensor[['sensor_id', 'from_node_id', 'to_node_id', 'count', 'scenario_index', 'activate',
                 'demand_period']].to_csv(r"%s\%s\sensor_data.csv" % (url_r, msa_name), index=False)
+
 
     ########## 5. Generate setting for DTALite: A quick run to determine total weight ##########
     assignment_settings = pd.DataFrame(
@@ -525,7 +529,10 @@ for emsa in range(0, 100):
     node_all.sort_values('node_id', inplace=True)
     node_all.to_csv(r"%s\%s\node.csv" % (url_r, msa_name), index=False)
     link_all = link_all.sort_values(by=['from_node_id', 'to_node_id']).reset_index(drop=True)
+    link_all['vdf_plf'] = 0.5
+    link_all = link_all.merge(all_sensor_s, on=['from_node_id', 'to_node_id'], how='left')
     link_all.to_csv(r"%s\%s\link.csv" % (url_r, msa_name), index=False)
+    zone_ids = zone_ids.merge(CBG_geo[['BGFIPS', 'geometry']], on='BGFIPS')
     zone_ids.to_csv(r"%s\%s\zone_id.csv" % (url_r, msa_name), index=False)
 
     # Run assignment
@@ -533,6 +540,24 @@ for emsa in range(0, 100):
     subprocess.call([r"%s\%s\TAPLite_0515_2025.exe" % (url_r, msa_name)])
 
     ########## 6. Calculate total weighting and rerun the DTALite with ODME ##########
+    assign_all_bf = pd.read_csv(r'%s\%s\link_performance.csv' % (url_r, msa_name))
+    assign_all_bf = assign_all_bf.merge(link[['link_id', 'AADT']], on='link_id', how='left')
+    assign_all_bf[['AADT', 'vehicle_volume']].corr()
+    tt_weight = (((all_aadt['AADT'] * all_aadt['aadt_length']).sum() * p_ratio) /
+                 (assign_all_bf['vehicle_volume'] * assign_all_bf['length_meter']).sum())
+    print('Total VMT weight: %.5f' % tt_weight)
+    od_flows_w = od_flows.copy()
+    od_flows_w['volume'] = od_flows_w['volume'] * tt_weight
+
+    # Run again with ODME
+    assignment_settings = pd.DataFrame(
+        [{'number_of_iterations': 5, 'route_output': 0, 'demand_period_starting_hours': 7,
+          'demand_period_ending_hours': 8, 'base_demand_mode': 0, 'log_file': 0, 'odme_mode': 1, 'odme_vmt': 0,
+          'number_of_processors': 6}])
+    assignment_settings.to_csv(r"%s\%s\settings.csv" % (url_r, msa_name))
+    od_flows_w[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\%s\demand.csv" % (url_r, msa_name), index=False)
+    subprocess.call([r"%s\%s\TAPLite_0515_2025.exe" % (url_r, msa_name)])
+
     assign_all_bf = pd.read_csv(r'%s\%s\link_performance.csv' % (url_r, msa_name))
     assign_all_bf['geometry'] = assign_all_bf['geometry'].apply(wkt.loads)
     assign_all_bf = gpd.GeoDataFrame(assign_all_bf, geometry='geometry', crs='EPSG:4326')

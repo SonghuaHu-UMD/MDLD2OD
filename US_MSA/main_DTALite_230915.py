@@ -67,6 +67,12 @@ CT_geo = pd.read_pickle(r'D:\MDLD_OD\MDLDod\shp\poly_ct_84.pkl')
 CT_geo['centroid_lon'] = CT_geo.centroid.x
 CT_geo['centroid_lat'] = CT_geo.centroid.y
 
+# Read place
+place_geo = pd.read_pickle(r'D:\MDLD_OD\MDLDod\shp\poly_place_84.pkl')
+place_pop = pd.read_csv(r'D:\MDLD_OD\MDLDod\shp\nhgis0023_ds267_20235_place.csv')
+place_pop = place_pop[['GEO_ID', 'ASN1E001']]
+place_pop.columns = ['GEOIDFQ', 'Place_Pop']
+
 if s_unit == 'CBG':
     # Read census block group
     CBG_geo = pd.read_pickle(r'D:\MDLD_OD\MDLDod\shp\poly_cbg_84.pkl')
@@ -104,22 +110,23 @@ all_od_files = glob.glob(r'G:\Dewey\Advan\Neighborhood Patterns - US\\*DATE_RANG
 # Loop for each CBSA
 for emsa in range(0, 100):
     msa_name = msa_pop.loc[emsa, 'CBSA_Name']
+    msa_id = msa_pop.loc[emsa, 'CBSA']
     Path(r"%s\%s" % (url_r, msa_name)).mkdir(parents=True, exist_ok=True)
     Path(r"D:\MDLD_OD\MDLDod\raw_data\%s" % msa_name).mkdir(parents=True, exist_ok=True)
     print("------------------- Start processing MSA: %s -----------------" % msa_name)
 
-    ########## 1. Get the center county of CBSA based on highest population density ##########
-    smart_loc_m = smart_loc.loc[smart_loc['CBSA_Name'] == msa_name, ['BGFIPS', 'TotPop', 'Ac_Land']]
-    smart_loc_m['CTFIPS'] = smart_loc['BGFIPS'].str[0:5]
-    smart_loc_m = smart_loc_m.groupby(['CTFIPS']).sum().reset_index()
-    smart_loc_m['PopDes'] = smart_loc_m['TotPop'] / smart_loc_m['Ac_Land']
-    smart_loc_m = smart_loc_m.sort_values(by='PopDes', ascending=False).reset_index(drop=True)
-    CT_geo_m = CT_geo.loc[CT_geo['GEOID'] == smart_loc_m.head(1)['CTFIPS'].item(), :]
-    msa_center = (CT_geo_m['centroid_lat'].item(), CT_geo_m['centroid_lon'].item())
+    ########## 1. Get the center county of CBSA based on highest population density of the place ##########
+    msa_geo = MSA_geo[MSA_geo['CBSAFP'] == msa_id].reset_index(drop=True)
+    msa_geo = msa_geo.to_crs('EPSG:4326')
+    place_msa = gpd.sjoin(place_geo, msa_geo, how='inner', predicate='within')
+    place_msa = place_msa.merge(place_pop, on='GEOIDFQ', how='left')
+    place_msa = place_msa.sort_values(by='Place_Pop', ascending=False).reset_index(drop=True)
+    CT_geo_m = place_msa.head(1)
+    msa_center = (float(CT_geo_m['INTPTLAT_left'].item()), float(CT_geo_m['INTPTLON_left'].item()))
 
     # 2. Get simulation network based on driving distance from CBSA center
     ox.settings.all_oneway = True
-    ddist = 30 * 1.60934 * 1000  # 30 miles
+    ddist = 50 * 1.60934 * 1000  # 50 miles
     if os.path.exists(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name):
         G = ox.graph.graph_from_xml(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
     else:
@@ -287,7 +294,7 @@ for emsa in range(0, 100):
     print('Number of zones: %s' % len(cbg_list))
     od_flows = od_flows[['destination', 'origin', 'Flow_w']]
 
-    ########## 3. Reformat OD and network data to align with DTALite ##########
+    ########## 4. Reformat OD and network data to align with DTALite ##########
     # Change zone id from CBFIPS to int
     zone_ids = pd.DataFrame({'destination': list(cbg_list), 'd_zone_id': range(0, len(cbg_list))})
     od_flows = od_flows.merge(zone_ids, on='destination')
@@ -328,7 +335,7 @@ for emsa in range(0, 100):
     plt.savefig(r"%s\%s\node_link.png" % (url_r, msa_name), dpi=500)
     plt.close()
 
-    ########## 4. Prepare ODME files: sensor data from FHWA AADT ##########
+    ########## 5. Prepare ODME files: sensor data from FHWA AADT ##########
     # Get AADT based on state name: may cover multiple states
     abbr_list = [fips_to_abbr.get(str(f).zfill(2), None) for f in need_st]
     all_aadt = []
@@ -399,8 +406,8 @@ for emsa in range(0, 100):
     binning = mapclassify.NaturalBreaks(all_aadt['AADT'], k=5)  # NaturalBreaks
     all_aadt['cut_jenks'] = (binning.yb + 1) * 0.5
     all_aadt.plot(column='AADT', cmap='RdYlGn_r', scheme="natural_breaks", k=5, lw=all_aadt['cut_jenks'], ax=ax[1],
-                  alpha=0.4, legend=True,
-                  legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
+                  alpha=0.4, legend=True, legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1,
+                                                       'loc': 'upper left'})
     ax[1].set_title('AADT (FHWA)')
     ax[1].axis('off')
     # ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
@@ -426,7 +433,7 @@ for emsa in range(0, 100):
     all_sensor[['sensor_id', 'from_node_id', 'to_node_id', 'count', 'scenario_index', 'activate',
                 'demand_period']].to_csv(r"%s\%s\sensor_data.csv" % (url_r, msa_name), index=False)
 
-    ########## 5. Generate setting for DTALite: A quick run to determine total weight ##########
+    ########## 6. Generate setting for DTALite: A quick run to determine total weight ##########
     # Generate demand period
     demand_period = pd.DataFrame(
         {'first_column': [0], "demand_period_id": 1, "demand_period": 'am', "notes": 'weekday',
@@ -484,7 +491,7 @@ for emsa in range(0, 100):
     os.chdir(r"%s\%s" % (url_r, msa_name))
     subprocess.call([r"%s\%s\DTALite_230915.exe" % (url_r, msa_name)])
 
-    ########## 6. Calculate total weighting and rerun the DTALite with ODME ##########
+    ########## 7. Calculate total weighting and rerun the DTALite with ODME ##########
     assign_all_bf = pd.read_csv(r'%s\%s\link_performance_s0_25nb.csv' % (url_r, msa_name))
     assign_all_bf = assign_all_bf.merge(link[['link_id', 'AADT']], on='link_id', how='left')
     assign_all_bf[['AADT', 'ODME_volume_before', 'ODME_volume_after']].corr()
@@ -510,10 +517,14 @@ for emsa in range(0, 100):
     od_flows_w[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\%s\demand.csv" % (url_r, msa_name), index=False)
     subprocess.call([r"%s\%s\DTALite_230915.exe" % (url_r, msa_name)])
 
-    # Plot results
+    ########## 8. Plot the results ##########
     assign_all = pd.read_csv(r'%s\%s\link_performance_s0_25nb.csv' % (url_r, msa_name))
     assign_all = assign_all.merge(link[['link_id', 'AADT']], on='link_id', how='left')
     assign_all[['AADT', 'ODME_volume_before', 'ODME_volume_after']].corr()
+
+    tt_weight = (((all_aadt['AADT'] * all_aadt['aadt_length']).sum() * p_ratio) /
+                 (assign_all['ODME_volume_after'] * assign_all['distance_km'] * 1000).sum())
+    print('Total VMT weight: %.5f' % tt_weight)
 
     # Plot link performance
     binning = mapclassify.NaturalBreaks(assign_all['ODME_volume_after'], k=5)  # NaturalBreaks
@@ -535,6 +546,7 @@ for emsa in range(0, 100):
     plt.savefig(r'%s\%s\assigned_traffic.pdf' % (url_r, msa_name))
     plt.close()
 
+    # aadt['ODME_volume_after1']=aadt['ODME_volume_after']*tt_weight
     aadtp = pd.melt(aadt, id_vars=['link_id', 'link_type_name'],
                     value_vars=['AADT_hour', 'ODME_volume_before', 'ODME_volume_after'])
     fig, ax = plt.subplots(figsize=(8, 5))
