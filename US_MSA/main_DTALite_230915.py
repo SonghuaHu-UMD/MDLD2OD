@@ -108,7 +108,7 @@ device_ratio = devices[['BGFIPS', 'devices_ratio']]
 url_r = r'D:\MDLD_OD\MDLDod\simulation'
 all_od_files = glob.glob(r'G:\Dewey\Advan\Neighborhood Patterns - US\\*DATE_RANGE_START-2019-05-01.csv.gz')
 # Loop for each CBSA
-for emsa in range(0, 100):
+for emsa in range(0, 1):
     msa_name = msa_pop.loc[emsa, 'CBSA_Name']
     msa_id = msa_pop.loc[emsa, 'CBSA']
     Path(r"%s\%s" % (url_r, msa_name)).mkdir(parents=True, exist_ok=True)
@@ -126,7 +126,7 @@ for emsa in range(0, 100):
 
     # 2. Get simulation network based on driving distance from CBSA center
     ox.settings.all_oneway = True
-    ddist = 50 * 1.60934 * 1000  # 50 miles
+    ddist = 15 * 1.60934 * 1000  # 15 miles
     if os.path.exists(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name):
         G = ox.graph.graph_from_xml(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
     else:
@@ -381,7 +381,6 @@ for emsa in range(0, 100):
         join_link = join_link.merge(all_aadt_t[['geometry', 'fhwa_id']], on='fhwa_id')
         join_link = join_link.merge(link[['geometry', 'link_id']], on='link_id')
         join_link['distance'] = join_link.apply(lambda row: row['geometry_x'].distance(row['geometry_y']), axis=1)
-
         valid_links = join_link[(np.abs(join_link['heading_left'] - join_link['heading_right']) < 10)]
         valid_links = valid_links.loc[valid_links.groupby(valid_links.link_id)['distance'].idxmin()]
         valid_links = valid_links[['link_id', 'fhwa_id', 'Route_ID', 'AADT']]
@@ -423,9 +422,9 @@ for emsa in range(0, 100):
     # all_sensor = all_sensor.drop_duplicates(subset=['Route_ID']).reset_index(drop=True)
     all_sensor = pd.concat([
         all_sensor[all_sensor['link_type_name'].isin(['motorway', 'secondary', 'primary'])].groupby(
-            'Route_ID').sample(frac=0.2),
+            'Route_ID').sample(frac=0.5),
         all_sensor[all_sensor['link_type_name'].isin(['residential', 'tertiary'])].drop_duplicates(
-            subset=['Route_ID']).sample(frac=0.2)], axis=0).reset_index(drop=True).reset_index()
+            subset=['Route_ID']).sample(frac=0.5)], axis=0).reset_index(drop=True).reset_index()
     all_sensor['sensor_id'] = all_sensor['index']
     all_sensor['scenario_index'] = 0
     all_sensor['activate'] = 1
@@ -501,7 +500,7 @@ for emsa in range(0, 100):
     od_flows_w = od_flows.copy()
     od_flows_w['volume'] = od_flows_w['volume'] * tt_weight
     # pre_ttod = od_flows_w['volume'].sum()
-    # od_flows_w = od_flows_w[od_flows_w['volume'] > 0].reset_index(drop=True)
+    # od_flows_w = od_flows_w[od_flows_w['volume'] > 0.1].reset_index(drop=True)
     # post_ttod = od_flows_w['volume'].sum()
     # print('Total loss od (pct): %.5f' % (100 * (post_ttod - pre_ttod) / pre_ttod))
 
@@ -579,22 +578,31 @@ for emsa in range(0, 100):
     plt.savefig(r'%s\%s\volume_before_after.pdf' % (url_r, msa_name))
     plt.close()
 
-    # Generate Final OD
-    od_all = pd.read_csv(r'%s\%s\od_performance_summary.csv' % (url_r, msa_name))
-    od_all = od_all.groupby(['o_zone_id', 'd_zone_id'])['volume_s0'].sum().reset_index()
-    od_all = od_all.merge(od_flows_w[['o_zone_id', 'd_zone_id', 'volume']], on=['o_zone_id', 'd_zone_id'], how='outer')
-    od_all = od_all.fillna(0)
+    # # Generate Final OD
+    route_all = pd.read_csv(r'%s\%s\route_assignment_s0_25nb.csv' % (url_r, msa_name), on_bad_lines='skip', index_col=0)
+    route_all.columns = list(route_all.columns[1:]) + [' ']
+    od_me = route_all.groupby(['o_zone_id', 'd_zone_id'])[
+        ['ODME_volume_before', 'ODME_volume_after']].sum().reset_index()
+    demand_f = pd.read_csv(r'%s\%s\demand.csv' % (url_r, msa_name), on_bad_lines='skip')
+    od_me = od_me.merge(demand_f, on=['o_zone_id', 'd_zone_id'], how='outer')
+    od_me = od_me.fillna(0).reset_index(drop=True)
+    od_me.to_csv(r'%s\%s\demand_odme.csv' % (url_r, msa_name))
+
     fig, ax = plt.subplots(figsize=(4.5, 4))
-    plt.plot(od_all['volume_s0'], od_all['volume'], 'o')
-    plt.xlabel('New OD')
-    plt.ylabel('Previous OD')
+    ax.plot(od_me['ODME_volume_before'], od_me['ODME_volume_after'], 'o', color='#00A08799', alpha=0.5, markersize=5)
+    ax.plot([0, od_me['ODME_volume_before'].max() * 0.5], [0, od_me['ODME_volume_before'].max() * 0.5], '--', lw=2,
+            color='k')
+    plt.xlabel('OD Volume (Before ODME)')
+    plt.ylabel('OD Volume (After ODME)')
     plt.tight_layout()
-    plt.savefig(r'%s\%s\od_before_after.pdf' % (url_r, msa_name))
+    plt.savefig(r'%s\%s\od_before_after.png' % (url_r, msa_name), dpi=500)
     plt.close()
 
     # Clear
+    del route_all
     if os.path.exists(r'%s\%s\log_label_correcting.txt' % (url_r, msa_name)):
         os.remove(r'%s\%s\log_label_correcting.txt' % (url_r, msa_name))
+        # os.remove(r'%s\%s\route_assignment_s0_25nb.csv' % (url_r, msa_name))
         print("File deleted.")
     else:
         print("File does not exist.")
