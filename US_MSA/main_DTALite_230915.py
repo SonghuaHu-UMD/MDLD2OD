@@ -12,10 +12,13 @@ import osm2gmns as og
 import shutil
 import subprocess
 import mapclassify
+import warnings
 import numpy as np
 import os
 import random
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString
+
+warnings.filterwarnings("ignore", category=UserWarning, message="Geometry is in a geographic CRS.*")
 
 
 # Calculate heading (bearing)
@@ -60,32 +63,32 @@ s_unit = 'CTR'
 
 ############# 1. Read raw shapefile and regional data #############
 # Read CBSA
-MSA_geo = gpd.GeoDataFrame.from_file(r'D:\MDLD_OD\MDLDod\shp\tl_2019_us_cbsa.shp')
+MSA_geo = gpd.GeoDataFrame.from_file(r'F:\MDLD_OD\MDLDod\shp\tl_2019_us_cbsa.shp')
 
 # Read county
-CT_geo = pd.read_pickle(r'D:\MDLD_OD\MDLDod\shp\poly_ct_84.pkl')
+CT_geo = pd.read_pickle(r'F:\MDLD_OD\MDLDod\shp\poly_ct_84.pkl')
 CT_geo['centroid_lon'] = CT_geo.centroid.x
 CT_geo['centroid_lat'] = CT_geo.centroid.y
 
 # Read place
-place_geo = pd.read_pickle(r'D:\MDLD_OD\MDLDod\shp\poly_place_84.pkl')
-place_pop = pd.read_csv(r'D:\MDLD_OD\MDLDod\shp\nhgis0023_ds267_20235_place.csv')
-place_pop = place_pop[['GEO_ID', 'ASN1E001']]
+place_geo = pd.read_pickle(r'F:\MDLD_OD\MDLDod\shp\poly_place_84.pkl')
+place_pops = pd.read_csv(r'F:\MDLD_OD\MDLDod\shp\nhgis0023_ds267_20235_place.csv')
+place_pop = place_pops[['GEO_ID', 'ASN1E001']]
 place_pop.columns = ['GEOIDFQ', 'Place_Pop']
 
 if s_unit == 'CBG':
     # Read census block group
-    CBG_geo = pd.read_pickle(r'D:\MDLD_OD\MDLDod\shp\poly_cbg_84.pkl')
+    CBG_geo = pd.read_pickle(r'F:\MDLD_OD\MDLDod\shp\poly_cbg_84.pkl')
     CBG_geo['BGFIPS'] = CBG_geo['GEOID']
     CBG_geo = CBG_geo[~CBG_geo['GISJOIN'].str[1:3].isin(un_st)].reset_index(drop=True)
 else:
     # Read census tract
-    CBG_geo = pd.read_pickle(r'D:\MDLD_OD\MDLDod\shp\poly_tract_84.pkl')
+    CBG_geo = pd.read_pickle(r'F:\MDLD_OD\MDLDod\shp\poly_tract_84.pkl')
     CBG_geo['BGFIPS'] = CBG_geo['GEOID']
     CBG_geo = CBG_geo[~CBG_geo['GISJOIN'].str[1:3].isin(un_st)].reset_index(drop=True)
 
 # Read CBSA Info
-smart_loc = pd.read_pickle(r'D:\MDLD_OD\MDLDod\shp\SmartLocationDatabase.pkl')
+smart_loc = pd.read_pickle(r'F:\MDLD_OD\MDLDod\shp\SmartLocationDatabase.pkl')
 smart_loc['BGFIPS'] = smart_loc['BGFIPS'].astype(str).apply(lambda x: x.zfill(12))
 smart_loc = smart_loc[~smart_loc['BGFIPS'].str[0:2].isin(un_st)].reset_index(drop=True)
 smart_loc['CBSA_Name'] = smart_loc['CBSA_Name'].str.replace('/', '-')
@@ -95,7 +98,7 @@ msa_pop = smart_loc.drop_duplicates(subset=['CBSA_Name', 'CBSA'])[['CBSA_Name', 
     by='CBSA_POP', ascending=False).reset_index(drop=True)
 
 # Read device count (CBG-level)
-devices = pd.read_csv(r'D:\MDLD_OD\MDLDod\shp\device_2019_05.csv')
+devices = pd.read_csv(r'F:\MDLD_OD\MDLDod\shp\device_2019_05.csv')
 devices = devices[['census_block_group', 'number_devices_residing']]
 devices.columns = ['BGFIPS', 'devices']
 devices['BGFIPS'] = devices['BGFIPS'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
@@ -105,14 +108,14 @@ devices['devices_ratio'] = devices['devices'] / devices['TotPop']  # devices.cor
 device_ratio = devices[['BGFIPS', 'devices_ratio']]
 
 ############# 2. Prepare simulation data and run for each CBSA #############
-url_r = r'D:\MDLD_OD\MDLDod\simulation'
+url_r = r'F:\MDLD_OD\MDLDod\simulation'
 all_od_files = glob.glob(r'G:\Dewey\Advan\Neighborhood Patterns - US\\*DATE_RANGE_START-2019-05-01.csv.gz')
 # Loop for each CBSA
-for emsa in range(0, 1):
+for emsa in range(0, 100):
     msa_name = msa_pop.loc[emsa, 'CBSA_Name']
     msa_id = msa_pop.loc[emsa, 'CBSA']
     Path(r"%s\%s" % (url_r, msa_name)).mkdir(parents=True, exist_ok=True)
-    Path(r"D:\MDLD_OD\MDLDod\raw_data\%s" % msa_name).mkdir(parents=True, exist_ok=True)
+    Path(r"F:\MDLD_OD\MDLDod\raw_data\%s" % msa_name).mkdir(parents=True, exist_ok=True)
     print("------------------- Start processing MSA: %s -----------------" % msa_name)
 
     ########## 1. Get the center county of CBSA based on highest population density of the place ##########
@@ -122,22 +125,34 @@ for emsa in range(0, 1):
     place_msa = place_msa.merge(place_pop, on='GEOIDFQ', how='left')
     place_msa = place_msa.sort_values(by='Place_Pop', ascending=False).reset_index(drop=True)
     CT_geo_m = place_msa.head(1)
-    msa_center = (float(CT_geo_m['INTPTLAT_left'].item()), float(CT_geo_m['INTPTLON_left'].item()))
+    place_cbg = gpd.sjoin(CBG_geo[['BGFIPS', 'geometry']], CT_geo_m[['PLACEFP', 'geometry']], how='inner',
+                          predicate='within')
+    if s_unit == 'CBG':
+        smart_loc['CETFIPS'] = smart_loc['BGFIPS']
+    else:
+        smart_loc['CETFIPS'] = smart_loc['BGFIPS'].str[0:11]
+    place_cbg = place_cbg.merge(smart_loc[['TotPop', 'Ac_Land', 'CETFIPS']], left_on='BGFIPS', right_on='CETFIPS')
+    place_cbg = place_cbg.groupby(['CETFIPS'])[['TotPop', 'Ac_Land']].sum().reset_index()
+    place_cbg['PopDes'] = place_cbg['TotPop'] / place_cbg['Ac_Land']
+    place_cbg = place_cbg.sort_values(by='PopDes', ascending=False).reset_index(drop=True)
+    CBG_geo_m = CBG_geo.loc[CBG_geo['BGFIPS'] == place_cbg.head(1)['CETFIPS'].item(), :]
+    msa_center = (CBG_geo_m.centroid.y.item(), CBG_geo_m.centroid.x.item())
 
     # 2. Get simulation network based on driving distance from CBSA center
     ox.settings.all_oneway = True
-    ddist = 15 * 1.60934 * 1000  # 15 miles
-    if os.path.exists(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name):
-        G = ox.graph.graph_from_xml(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
+    ddist = 35 * 1.60934 * 1000  # 30 miles
+    if os.path.exists(r'F:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name):
+        G = ox.graph.graph_from_xml(r'F:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
     else:
-        print('-------------- %s: Downloading Network--------------' % msa_name)
+        print('-------------- %s: Downloading Network --------------' % msa_name)
+        print(msa_center)
         G = ox.graph.graph_from_point(msa_center, dist=ddist, dist_type='network', network_type="drive", simplify=True)
-        ox.io.save_graph_xml(G, filepath=r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
+        ox.io.save_graph_xml(G, filepath=r'F:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
     print('No of edges: %s' % G.number_of_edges())
     edge_gpd = ox.convert.graph_to_gdfs(G, nodes=False, edges=True)
     node_gpd = ox.convert.graph_to_gdfs(G, nodes=True, edges=False).reset_index()
     boundary_gpd = gpd.GeoDataFrame(geometry=[edge_gpd.unary_union.convex_hull], crs=edge_gpd.crs)
-    boundary_gpd.to_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\boundary.csv' % msa_name)
+    boundary_gpd.to_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\boundary.csv' % msa_name)
 
     # Get need CBG based on simulation network
     SInBG = gpd.sjoin(node_gpd, CBG_geo, how='inner', predicate='within').reset_index(drop=True)
@@ -146,15 +161,15 @@ for emsa in range(0, 1):
 
     # Convert the simulation network using osm2gmns
     print('-------------- %s: Converting Network--------------' % msa_name)
-    net = og.getNetFromFile(r'D:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
+    net = og.getNetFromFile(r'F:\MDLD_OD\MDLDod\raw_data\%s\osm_network.osm' % msa_name)
     # og.fillLinkAttributesWithDefaultValues(net)
     # og.generateNodeActivityInfo(net)
     og.consolidateComplexIntersections(net, auto_identify=True)
-    og.outputNetToCSV(net, output_folder=r"D:\MDLD_OD\MDLDod\raw_data\%s" % msa_name)
+    og.outputNetToCSV(net, output_folder=r"F:\MDLD_OD\MDLDod\raw_data\%s" % msa_name)
 
     # Add additional features to links
-    node = pd.read_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\node.csv' % msa_name)
-    link = pd.read_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\link.csv' % msa_name, on_bad_lines='skip')
+    node = pd.read_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\node.csv' % msa_name)
+    link = pd.read_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\link.csv' % msa_name, on_bad_lines='skip')
     link.rename({'facility_type': 'link_type_name'}, axis=1, inplace=True)
     # print(link['link_type_name'].value_counts())
     # link.drop_duplicates(subset=['from_node_id', 'to_node_id'])
@@ -225,17 +240,17 @@ for emsa in range(0, 1):
     od_flows = pd.concat(od_flowss, ignore_index=True)
     od_flows.columns = ['destination', 'origin', 'monthly_total']
     od_flows = od_flows.groupby(['destination', 'origin']).sum().reset_index()
-    od_flows.to_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\OD.csv' % msa_name)
+    od_flows.to_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\OD.csv' % msa_name)
 
     hourly_flows = pd.concat(hourly_flows, ignore_index=True)
     hourly_flows = hourly_flows.groupby(['AREA', 'Datetime'])['visits'].sum().reset_index()
     hourly_flows.columns = ['destination', 'Datetime', 'hourly_flow']
-    hourly_flows.to_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\hourly_ratio.csv' % msa_name)
+    hourly_flows.to_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\hourly_ratio.csv' % msa_name)
 
-    # od_flows = pd.read_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\OD.csv' % msa_name, index_col=0)
+    # od_flows = pd.read_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\OD.csv' % msa_name, index_col=0)
     # od_flows['destination'] = od_flows['destination'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
     # od_flows['origin'] = od_flows['origin'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
-    # hourly_flows = pd.read_csv(r'D:\MDLD_OD\MDLDod\raw_data\%s\hourly_ratio.csv' % msa_name, index_col=0)
+    # hourly_flows = pd.read_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\hourly_ratio.csv' % msa_name, index_col=0)
     # hourly_flows['Datetime'] = pd.to_datetime(hourly_flows['Datetime'])
     # hourly_flows['destination'] = hourly_flows['destination'].astype('int64').astype(str).apply(lambda x: x.zfill(12))
 
@@ -340,9 +355,9 @@ for emsa in range(0, 1):
     abbr_list = [fips_to_abbr.get(str(f).zfill(2), None) for f in need_st]
     all_aadt = []
     for st_abb in abbr_list:
-        state_network = pd.read_pickle(r'D:\MDLD_OD\Volume\HPMS_2020\HPMS_FULL_%s_2020.pkl' % st_abb)
+        state_network = pd.read_pickle(r'F:\MDLD_OD\Volume\HPMS_2020\HPMS_FULL_%s_2020.pkl' % st_abb)
         state_network = state_network.reset_index()
-        SInBG = gpd.sjoin(state_network, boundary_gpd, how='inner', predicate='intersects').reset_index(drop=True)
+        SInBG = gpd.sjoin(state_network, boundary_gpd, how='inner', predicate='within').reset_index(drop=True)
         state_network = state_network[state_network['index'].isin(SInBG['index'])].reset_index(drop=True)
         all_aadt.append(state_network)
     all_aadt = pd.concat(all_aadt, ignore_index=True)
@@ -410,7 +425,6 @@ for emsa in range(0, 1):
     ax[1].set_title('AADT (FHWA)')
     ax[1].axis('off')
     # ctx.add_basemap(ax, crs=aadt.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
-    plt.title(msa_name)
     plt.tight_layout()
     plt.savefig(r'%s\%s\AADT_matched.pdf' % (url_r, msa_name))
     plt.close()
@@ -429,8 +443,6 @@ for emsa in range(0, 1):
     all_sensor['scenario_index'] = 0
     all_sensor['activate'] = 1
     all_sensor['demand_period'] = 'AM'
-    all_sensor[['sensor_id', 'from_node_id', 'to_node_id', 'count', 'scenario_index', 'activate',
-                'demand_period']].to_csv(r"%s\%s\sensor_data.csv" % (url_r, msa_name), index=False)
 
     ########## 6. Generate setting for DTALite: A quick run to determine total weight ##########
     # Generate demand period
@@ -473,7 +485,7 @@ for emsa in range(0, 1):
     settings.to_csv(r'%s\%s\settings.csv' % (url_r, msa_name), index=False)
 
     # Output
-    shutil.copy2(r'D:\MDLD_OD\DTALite_230915.exe', r"%s\%s" % (url_r, msa_name))
+    shutil.copy2(r'F:\MDLD_OD\DTALite_230915.exe', r"%s\%s" % (url_r, msa_name))
     od_flows_s = od_flows[od_flows['volume'] > 0]
     # pre_ttod = od_flows['volume'].sum()
     # print('Total loss od (pct): %.5f' % (100 * (od_flows_s['volume'].sum() - pre_ttod) / pre_ttod))
@@ -493,16 +505,15 @@ for emsa in range(0, 1):
     ########## 7. Calculate total weighting and rerun the DTALite with ODME ##########
     assign_all_bf = pd.read_csv(r'%s\%s\link_performance_s0_25nb.csv' % (url_r, msa_name))
     assign_all_bf = assign_all_bf.merge(link[['link_id', 'AADT']], on='link_id', how='left')
-    assign_all_bf[['AADT', 'ODME_volume_before', 'ODME_volume_after']].corr()
     tt_weight = (((all_aadt['AADT'] * all_aadt['aadt_length']).sum() * p_ratio) /
-                 (assign_all_bf['ODME_volume_after'] * assign_all_bf['distance_km'] * 1000).sum())
+                 (assign_all_bf['volume'] * assign_all_bf['distance_km'] * 1000).sum())
     print('Total VMT weight: %.5f' % tt_weight)
     od_flows_w = od_flows.copy()
     od_flows_w['volume'] = od_flows_w['volume'] * tt_weight
-    # pre_ttod = od_flows_w['volume'].sum()
-    # od_flows_w = od_flows_w[od_flows_w['volume'] > 0.1].reset_index(drop=True)
-    # post_ttod = od_flows_w['volume'].sum()
-    # print('Total loss od (pct): %.5f' % (100 * (post_ttod - pre_ttod) / pre_ttod))
+    pre_ttod = od_flows_w['volume'].sum()
+    od_flows_w = od_flows_w[od_flows_w['volume'] > 0.05].reset_index(drop=True)
+    post_ttod = od_flows_w['volume'].sum()
+    print('Total loss od (pct): %.5f' % (100 * (post_ttod - pre_ttod) / pre_ttod))
 
     # Run again with ODME
     settings = pd.DataFrame(
@@ -514,13 +525,14 @@ for emsa in range(0, 1):
          "value": [10, 0, 0, 0.1, 6, "meter", "kmph", 50000, 50000]})
     settings.to_csv(r'%s\%s\settings.csv' % (url_r, msa_name), index=False)
     od_flows_w[['o_zone_id', 'd_zone_id', 'volume']].to_csv(r"%s\%s\demand.csv" % (url_r, msa_name), index=False)
+    all_sensor[['sensor_id', 'from_node_id', 'to_node_id', 'count', 'scenario_index', 'activate',
+                'demand_period']].to_csv(r"%s\%s\sensor_data.csv" % (url_r, msa_name), index=False)
     subprocess.call([r"%s\%s\DTALite_230915.exe" % (url_r, msa_name)])
 
     ########## 8. Plot the results ##########
     assign_all = pd.read_csv(r'%s\%s\link_performance_s0_25nb.csv' % (url_r, msa_name))
     assign_all = assign_all.merge(link[['link_id', 'AADT']], on='link_id', how='left')
-    assign_all[['AADT', 'ODME_volume_before', 'ODME_volume_after']].corr()
-
+    print(assign_all[['AADT', 'ODME_volume_before', 'ODME_volume_after']].corr())
     tt_weight = (((all_aadt['AADT'] * all_aadt['aadt_length']).sum() * p_ratio) /
                  (assign_all['ODME_volume_after'] * assign_all['distance_km'] * 1000).sum())
     print('Total VMT weight: %.5f' % tt_weight)
@@ -578,28 +590,28 @@ for emsa in range(0, 1):
     plt.savefig(r'%s\%s\volume_before_after.pdf' % (url_r, msa_name))
     plt.close()
 
-    # # Generate Final OD
-    route_all = pd.read_csv(r'%s\%s\route_assignment_s0_25nb.csv' % (url_r, msa_name), on_bad_lines='skip', index_col=0)
-    route_all.columns = list(route_all.columns[1:]) + [' ']
-    od_me = route_all.groupby(['o_zone_id', 'd_zone_id'])[
-        ['ODME_volume_before', 'ODME_volume_after']].sum().reset_index()
-    demand_f = pd.read_csv(r'%s\%s\demand.csv' % (url_r, msa_name), on_bad_lines='skip')
-    od_me = od_me.merge(demand_f, on=['o_zone_id', 'd_zone_id'], how='outer')
-    od_me = od_me.fillna(0).reset_index(drop=True)
-    od_me.to_csv(r'%s\%s\demand_odme.csv' % (url_r, msa_name))
-
-    fig, ax = plt.subplots(figsize=(4.5, 4))
-    ax.plot(od_me['ODME_volume_before'], od_me['ODME_volume_after'], 'o', color='#00A08799', alpha=0.5, markersize=5)
-    ax.plot([0, od_me['ODME_volume_before'].max() * 0.5], [0, od_me['ODME_volume_before'].max() * 0.5], '--', lw=2,
-            color='k')
-    plt.xlabel('OD Volume (Before ODME)')
-    plt.ylabel('OD Volume (After ODME)')
-    plt.tight_layout()
-    plt.savefig(r'%s\%s\od_before_after.png' % (url_r, msa_name), dpi=500)
-    plt.close()
+    # # # Generate Final OD
+    # route_all = pd.read_csv(r'%s\%s\route_assignment_s0_25nb.csv' % (url_r, msa_name), on_bad_lines='skip', index_col=0)
+    # route_all.columns = list(route_all.columns[1:]) + [' ']
+    # od_me = route_all.groupby(['o_zone_id', 'd_zone_id'])[
+    #     ['ODME_volume_before', 'ODME_volume_after']].sum().reset_index()
+    # demand_f = pd.read_csv(r'%s\%s\demand.csv' % (url_r, msa_name), on_bad_lines='skip')
+    # od_me = od_me.merge(demand_f, on=['o_zone_id', 'd_zone_id'], how='outer')
+    # od_me = od_me.fillna(0).reset_index(drop=True)
+    # od_me.to_csv(r'%s\%s\demand_odme.csv' % (url_r, msa_name))
+    #
+    # fig, ax = plt.subplots(figsize=(4.5, 4))
+    # ax.plot(od_me['ODME_volume_before'], od_me['ODME_volume_after'], 'o', color='#00A08799', alpha=0.5, markersize=5)
+    # ax.plot([0, od_me['ODME_volume_before'].max() * 0.5], [0, od_me['ODME_volume_before'].max() * 0.5], '--', lw=2,
+    #         color='k')
+    # plt.xlabel('OD Volume (Before ODME)')
+    # plt.ylabel('OD Volume (After ODME)')
+    # plt.tight_layout()
+    # plt.savefig(r'%s\%s\od_before_after.png' % (url_r, msa_name), dpi=500)
+    # plt.close()
+    # del route_all
 
     # Clear
-    del route_all
     if os.path.exists(r'%s\%s\log_label_correcting.txt' % (url_r, msa_name)):
         os.remove(r'%s\%s\log_label_correcting.txt' % (url_r, msa_name))
         # os.remove(r'%s\%s\route_assignment_s0_25nb.csv' % (url_r, msa_name))
