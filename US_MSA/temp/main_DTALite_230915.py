@@ -23,7 +23,6 @@ pd.options.mode.chained_assignment = None
 random.seed(42)
 np.random.seed(42)
 
-
 # Calculate heading (bearing)
 def calculate_heading(line):
     start = line.coords[0]
