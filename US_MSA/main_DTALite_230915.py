@@ -114,7 +114,7 @@ all_od_files = glob.glob(r'G:\Dewey\Advan\Neighborhood Patterns - US\\*DATE_RANG
 ddist = 30 * 1.60934 * 1000  # 30 miles
 simulation_t = False
 # Loop for each CBSA
-for emsa in range(39, 100):
+for emsa in range(95, 100):  # 81
     wt_s = []
     msa_name = msa_pop.loc[emsa, 'CBSA_Name']
     msa_id = msa_pop.loc[emsa, 'CBSA']
@@ -131,6 +131,9 @@ for emsa in range(39, 100):
     CT_geo_m = place_msa.head(1)
     place_cbg = gpd.sjoin(CBG_geo[['BGFIPS', 'geometry']], CT_geo_m[['PLACEFP', 'geometry']], how='inner',
                           predicate='within')
+    if len(place_cbg) == 0:
+        place_cbg = gpd.sjoin(CBG_geo[['BGFIPS', 'geometry']], CT_geo_m[['PLACEFP', 'geometry']], how='inner',
+                              predicate='intersects')
     if s_unit == 'CBG':
         smart_loc['CETFIPS'] = smart_loc['BGFIPS']
     else:
@@ -140,7 +143,10 @@ for emsa in range(39, 100):
     place_cbg['PopDes'] = place_cbg['TotEmp'] / place_cbg['Ac_Land']
     place_cbg = place_cbg.sort_values(by='PopDes', ascending=False).reset_index(drop=True)
     CBG_geo_m = CBG_geo.loc[CBG_geo['BGFIPS'] == place_cbg.head(1)['CETFIPS'].item(), :]
-    msa_center = (round(CBG_geo_m.centroid.y.item(), 3), round(CBG_geo_m.centroid.x.item(), 3))
+    msa_center = (round(CBG_geo_m.centroid.y.item(), 2), round(CBG_geo_m.centroid.x.item(), 2))
+
+    if msa_name == 'Cape Coral-Fort Myers, FL':
+        msa_center = (26.651720, -81.950723)
 
     # 2. Get simulation network based on driving distance from CBSA center
     ox.settings.all_oneway = True
@@ -249,7 +255,8 @@ for emsa in range(39, 100):
                     float)
                 date_range = [d.strftime('%Y-%m-%d %H:%M:%S')
                               for d in pd.date_range(ng_pattern.loc[0, 'DATE_RANGE_START'].split('T')[0],
-                                                     ng_pattern.loc[0, 'DATE_RANGE_END'].split('T')[0], freq='h')][0: -1]
+                                                     ng_pattern.loc[0, 'DATE_RANGE_END'].split('T')[0], freq='h')][
+                    0: -1]
                 hourly_visit.columns = date_range
                 hourly_visit['AREA'] = ng_pattern['AREA']
                 hourly_visit_st = pd.melt(hourly_visit, id_vars=['AREA'], value_vars=date_range)
