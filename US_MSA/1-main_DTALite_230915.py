@@ -124,7 +124,7 @@ baseline_t = True
 rerun_t = True
 need_lt = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary']
 # Loop for each CBSA
-for emsa in range(30, 100):  # 81
+for emsa in range(0, 100):  # 81
     wt_s = []
     msa_name = msa_pop.loc[emsa, 'CBSA_Name']
     msa_id = msa_pop.loc[emsa, 'CBSA']
@@ -442,6 +442,9 @@ for emsa in range(30, 100):  # 81
     link = link.to_crs('EPSG:4326')
     all_aadt = all_aadt.to_crs('EPSG:4326')
     all_aadt['AADT_hour'] = all_aadt['AADT'] * p_ratio
+    all_aadt.to_pickle(r'F:\MDLD_OD\MDLDod\raw_data\%s\all_aadt.pkl' % msa_name)
+    valid_linkss['AADT_hour'] = valid_linkss['AADT'] * p_ratio
+    valid_linkss.to_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\valid_linkss.csv' % msa_name)
 
     # Plot matched outcomes
     fig, ax = plt.subplots(figsize=(12, 7), nrows=1, ncols=2, sharex=True, sharey=True)

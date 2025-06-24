@@ -113,3 +113,34 @@ for e_layer in tqdm(layers[50:]):
     shp_layer = gpd.read_file(r'D:\MDLD_OD\Volume\HPMS_2020.gdb', layer=e_layer)
     # shp_layer.to_file(r'D:\MDLD_OD\Volume\AADT\road_%s.shp' % e_layer)
     shp_layer.to_pickle(r'D:\MDLD_OD\Volume\HPMS_2020\%s.pkl' % e_layer.split('\\')[-1].split('.')[0])
+
+    # OD changes by
+    od_flows = od_flows.to_crs(epsg=3857)
+    od_flows['od_length'] = od_flows.geometry.length / 1e3
+    od_flows = od_flows.to_crs(epsg=4326)
+    od_flows['od_final_pct'] = 100 * (od_flows['od_final'] - od_flows['od_weight']) / od_flows['od_weight']
+    binning = mapclassify.NaturalBreaks(od_flows['od_length'], k=10)
+    od_flows['cut_jenks_length'] = binning.yb
+
+    fig, ax = plt.subplots(figsize=(6.5, 5))
+    sns.boxplot(od_flows, x='cut_jenks_length', y='od_final_pct', showfliers=False, showmeans=False,
+                meanline=True, meanprops=dict(linestyle='-', linewidth=1, color='purple'), ax=ax)
+
+
+all_link = pd.concat(all_link, axis=0).reset_index(drop=True)
+all_link['geometry'] = all_link['geometry'].apply(wkt.loads)
+all_link = gpd.GeoDataFrame(all_link, geometry='geometry', crs="EPSG:4326")
+all_link = all_link.to_crs(epsg=5070)
+
+fig, ax = plt.subplots(figsize=(16, 9))
+all_link.plot(column='free_speed', cmap='RdYlGn', scheme="natural_breaks", k=6, lw=0.2,
+              ax=ax, alpha=0.6, legend=True, legend_kwds={"fmt": "{:.2f}", 'ncol': 2})
+ctx.add_basemap(ax, crs=all_link.crs, source=ctx.providers.CartoDB.DarkMatter, alpha=0.9)
+# plt.subplots_adjust(top=0.99, bottom=0.003, left=0.0, right=1.0, hspace=0.0, wspace=0.0)
+plt.tight_layout()
+plt.axis('off')
+plt.savefig(r'D:\Speed_US\area_cover\area_cover.pdf')
+plt.close()
+# We focus on the sampling biases: Study their relationship with MSA-level socio-spatial factors
+# 1. Raw data: Directly from MPLD 2. Add population weighting without ODME 3. Final: With ODME
+# For each OD, we run the DTA, record the outcomes.
