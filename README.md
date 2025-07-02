@@ -40,7 +40,7 @@ This repository contains a multi-stage pipeline to construct, simulate, and vali
 - **Geospatial shapefiles**: Census CBGs, tracts, CBSAs, and places.
 - **Socio-demographics**: NHGIS, SmartLocation Database.
 - **Road networks**: Downloaded from OpenStreetMap via `osmnx`.
-- **Simulation tool**: [DTALite](https://github.com/DrKeHan/DTALite).
+- **Simulation tool**: [DTALite](https://github.com/asu-trans-ai-lab/DTALite).
 - **AADT**: HPMS 2024 shapefiles for ground-truth traffic volumes.
 
 ---
@@ -57,43 +57,6 @@ This repository contains a multi-stage pipeline to construct, simulate, and vali
 
 ---
 
-## 🚀 Getting Started
-
-### 1. Clone the repo
-
-```bash
-git clone https://github.com/yourusername/traffic-demand-dtalite.git
-cd traffic-demand-dtalite
-```
-
-### 2. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-You also need:
-- `osmnx`, `osm2gmns`, `geopandas`, `contextily`, `DTALite`
-- `matplotlib`, `seaborn`, `tqdm`, `mapclassify`
-
-### 3. Run scripts step-by-step
-
-- Extract OD:  
-  ```bash
-  python 0-OD_from_Individual.py
-  ```
-
-- Run DTALite pipeline (each CBSA):
-  ```bash
-  python 1-main_DTALite_230915.py
-  ```
-
-- Analyze results:
-  ```bash
-  python 2-results_analysis.py
-  ```
-
----
 
 ## 📂 Output Files
 
