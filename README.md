@@ -1,6 +1,6 @@
-# National-Scale Traffic Demand Modeling with Mobile Phone Data and DTALite
+# Top100 Mobile Phone Data-based OD Flow for Dynamic Traffic Assignment
 
-This repository contains a multi-stage pipeline to construct, simulate, and validate large-scale dynamic traffic demand using mobile phone data, DTALite simulation, and FHWA AADT ground truth for the top 100 U.S. metro areas.
+This repository contains a multi-stage pipeline to construct, simulate, and validate large-scale dynamic traffic demand modeling using mobile phone data, DTALite simulation, and FHWA AADT ground truth for the top 100 U.S. metro areas.
 
 **Main Highlights:**
 - Provides **public OD datasets and simulation-ready networks** for the **top 100 CBSAs** in the United States.
