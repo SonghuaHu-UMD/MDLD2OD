@@ -144,3 +144,12 @@ plt.close()
 # We focus on the sampling biases: Study their relationship with MSA-level socio-spatial factors
 # 1. Raw data: Directly from MPLD 2. Add population weighting without ODME 3. Final: With ODME
 # For each OD, we run the DTA, record the outcomes.
+
+# The start and end timestamps are not truth for imputed since we also don't know.
+# start_corrections = pd.DataFrame({
+#     'caid': need_home_start['caid'], 'start_place_id': 'home',
+#     'start_timestamp': need_home_start['start_timestamp'] - datetime.timedelta(hours=1),
+#     'end_place_id': need_home_start['start_place_id'], 'end_cbg': need_home_start['start_cbg'],
+#     'end_timestamp': need_home_start['start_timestamp'], 'is_imputed': True})
+# start_corrections['start_timestamp'].isnull().sum() / len(start_corrections)
+# start_corrections['end_timestamp'].isnull().sum() / len(start_corrections)
