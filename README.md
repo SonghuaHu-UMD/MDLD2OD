@@ -13,7 +13,7 @@ This repository contains a multi-stage pipeline to construct, simulate, and vali
 
 ### Step 0: OD Extraction from Mobile Data
 
-- `0-OD_from_Individual.py`: Processes Veraset mobile phone data to generate daily OD flows at the Census Block Group (CBG) level. Includes home location detection, trip chaining, and hourly trip estimation.
+- `0-OD_from_Individual.py`: Processes Veraset/SafeGraph mobile phone data to generate daily OD flows at the Census Block Group (CBG) level. Includes home location detection, trip chaining, and hourly trip estimation.
 
 ### Step 1: DTALite Simulation Preparation and Execution
 
@@ -36,12 +36,12 @@ This repository contains a multi-stage pipeline to construct, simulate, and vali
 
 ## 🗃️ Inputs and External Data
 
-- **Mobile OD data**: Veraset Visits data (Snappy Parquet format).
+- **Mobile OD data**: Veraset/SafeGraph Visits data.
 - **Geospatial shapefiles**: Census CBGs, tracts, CBSAs, and places.
-- **Socio-demographics**: NHGIS, SmartLocation Database.
-- **Road networks**: Downloaded from OpenStreetMap via `osmnx`.
+- **Socio-demographics**: ACS, SmartLocation Database.
+- **Road networks**: Downloaded from OpenStreetMap via `osmnx` and refined via `osmn2gmns`.
 - **Simulation tool**: [DTALite](https://github.com/asu-trans-ai-lab/DTALite).
-- **AADT**: HPMS 2024 shapefiles for ground-truth traffic volumes.
+- **AADT**: HPMS AADT for ground-truth traffic volumes.
 
 ---
 
