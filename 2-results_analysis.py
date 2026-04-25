@@ -5,13 +5,14 @@ from tqdm import tqdm
 import geopandas as gpd
 import contextily as ctx
 from shapely import wkt
-from pathlib import Path
 import mapclassify
 import warnings
 import numpy as np
 import random
 from shapely.geometry import LineString
 from functools import reduce
+
+from paths import SHP_DIR, RAW_DATA_DIR, SIMULATION_DIR, RESULTS_DIR, RESULTS_ALL_DIR
 
 warnings.filterwarnings("ignore", category=UserWarning, message="Geometry is in a geographic CRS.*")
 pd.options.mode.chained_assignment = None
@@ -27,7 +28,7 @@ plt.rcParams.update(
 
 un_st = ['02', '15', '60', '66', '69', '72', '78']
 # Read CBSA Info
-smart_loc = pd.read_pickle(r'F:\MDLD_OD\MDLDod\shp\SmartLocationDatabase.pkl')
+smart_loc = pd.read_pickle(SHP_DIR / 'SmartLocationDatabase.pkl')
 smart_loc['BGFIPS'] = smart_loc['BGFIPS'].astype(str).apply(lambda x: x.zfill(12))
 smart_loc = smart_loc[~smart_loc['BGFIPS'].str[0:2].isin(un_st)].reset_index(drop=True)
 smart_loc['CBSA_Name'] = smart_loc['CBSA_Name'].str.replace('/', '-')
@@ -37,7 +38,7 @@ msa_pop = smart_loc.drop_duplicates(subset=['CBSA_Name', 'CBSA'])[['CBSA_Name', 
     by='CBSA_POP', ascending=False).reset_index(drop=True)
 
 # Read socio-demo
-ctract_socio = pd.read_csv(r'F:\MDLD_OD\MDLDod\shp\CTract_2022.csv', index_col=0)
+ctract_socio = pd.read_csv(SHP_DIR / 'CTract_2022.csv', index_col=0)
 ctract_socio['BGFIPS'] = ctract_socio['BGFIPS'].astype(str).apply(lambda x: x.zfill(11))
 
 
@@ -61,7 +62,31 @@ def replace_maxmin_legend(ax):
             print(f"Could not parse label: {label}, error: {e}")
 
 
-url_r = r'F:\MDLD_OD\MDLDod\simulation'
+def plot_natural_breaks(gdf, col, out_path, k=4):
+    """Plot a GeoDataFrame column with natural-breaks styling, zeros in gray."""
+    fig, ax = plt.subplots(figsize=(4.5, 4))
+    binning = mapclassify.NaturalBreaks(gdf[col], k=k)
+    gdf = gdf.copy()
+    gdf['cut_jenks'] = (binning.yb + 1) * 0.5
+    gdf[gdf[col] == 0].plot(ax=ax, alpha=0.3, lw=0.25, color='gray')
+    gdfr = gdf[gdf[col] > 0].reset_index(drop=True)
+    gdfr.plot(column=col, cmap='RdYlGn_r', scheme="natural_breaks", k=k, lw=gdfr['cut_jenks'],
+              ax=ax, alpha=0.4, legend=True,
+              legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
+    ctx.add_basemap(ax, crs=gdf.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
+    replace_maxmin_legend(ax)
+    plt.axis('off')
+    plt.tight_layout()
+    plt.savefig(out_path)
+    plt.close()
+
+
+def read_perf(src_dir, rename):
+    """Read link_performance_s0_25nb.csv, keep/rename columns."""
+    return pd.read_csv(src_dir / 'link_performance_s0_25nb.csv',
+                       usecols=['link_id'] + list(rename)).rename(columns=rename)
+
+
 all_bound = []
 all_metric_od = []
 all_metric_v = []
@@ -71,23 +96,23 @@ for emsa in tqdm(range(0, 100)):
     msa_name = msa_pop.loc[emsa, 'CBSA_Name']
     msa_id = msa_pop.loc[emsa, 'CBSA']
 
-    Path(r"F:\MDLD_OD\MDLDod\results\%s" % msa_name).mkdir(parents=True, exist_ok=True)
+    result_dir = RESULTS_DIR / msa_name
+    result_dir.mkdir(parents=True, exist_ok=True)
 
-    url_raw = r"F:\MDLD_OD\MDLDod\simulation\Raw_OD\%s" % msa_name
-    url_weight = r"F:\MDLD_OD\MDLDod\simulation\Weighted_OD\%s" % msa_name
-    url_odme = r"F:\MDLD_OD\MDLDod\simulation\ODME\%s" % msa_name
-    url_final = r"F:\MDLD_OD\MDLDod\simulation\Final\%s" % msa_name
-    url_result = r"F:\MDLD_OD\MDLDod\results\%s" % msa_name
+    raw_dir = SIMULATION_DIR / 'Raw_OD' / msa_name
+    weight_dir = SIMULATION_DIR / 'Weighted_OD' / msa_name
+    odme_dir = SIMULATION_DIR / 'ODME' / msa_name
+    final_dir = SIMULATION_DIR / 'Final' / msa_name
 
     # Read all MSA shp
-    boundary = pd.read_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\boundary.csv' % msa_name, index_col=0)
+    boundary = pd.read_csv(RAW_DATA_DIR / msa_name / 'boundary.csv', index_col=0)
     boundary['mas_name'] = msa_name
     boundary['mas_id'] = msa_id
     boundary['pop'] = msa_pop.loc[emsa, 'CBSA_POP']
     boundary['rank'] = emsa
     all_bound.append(boundary)
 
-    link = pd.read_csv(url_final + '\link.csv', index_col=0)
+    link = pd.read_csv(final_dir / 'link.csv', index_col=0)
     link['mas_name'] = msa_name
     link['mas_id'] = msa_id
     link['rank'] = emsa
@@ -103,19 +128,19 @@ for emsa in tqdm(range(0, 100)):
     # plt.subplots_adjust(top=0.99, bottom=0.003, left=0.0, right=1.0, hspace=0.0, wspace=0.0)
     plt.axis('off')
     plt.tight_layout()
-    plt.savefig('%s\links.pdf' % url_result)
+    plt.savefig(result_dir / 'links.pdf')
     plt.close()
 
     ### 2. Figure 2: Comparison across different OD Tables ###
-    od_raw = pd.read_csv(url_raw + '\demand.csv', names=['o_zone_id', 'd_zone_id', 'od_raw'], header=0)
-    od_weight = pd.read_csv(url_weight + '\demand.csv', names=['o_zone_id', 'd_zone_id', 'od_weight'], header=0)
-    od_final = pd.read_csv(url_final + '\demand.csv', names=['o_zone_id', 'd_zone_id', 'od_final'], header=0)
+    od_raw = pd.read_csv(raw_dir / 'demand.csv', names=['o_zone_id', 'd_zone_id', 'od_raw'], header=0)
+    od_weight = pd.read_csv(weight_dir / 'demand.csv', names=['o_zone_id', 'd_zone_id', 'od_weight'], header=0)
+    od_final = pd.read_csv(final_dir / 'demand.csv', names=['o_zone_id', 'd_zone_id', 'od_final'], header=0)
     od_flows = reduce(lambda left, right: pd.merge(left, right, on=['o_zone_id', 'd_zone_id'], how='outer'),
                       [od_raw, od_weight, od_final])
     od_flows = od_flows.fillna(0)
 
     # Get OD lat lng
-    zones = pd.read_csv(url_final + '\zone_id.csv')
+    zones = pd.read_csv(final_dir / 'zone_id.csv')
     zones['BGFIPS'] = zones['BGFIPS'].astype(str).apply(lambda x: x.zfill(11))
     zones['geometry'] = zones['geometry'].apply(wkt.loads)
     zones = gpd.GeoDataFrame(zones, geometry='geometry', crs="EPSG:4326")
@@ -156,7 +181,7 @@ for emsa in tqdm(range(0, 100)):
         ax.axis('off')
         cct += 1
         plt.tight_layout()
-        plt.savefig('%s\od_flows_%s.pdf' % (url_result, od_kk))
+        plt.savefig(result_dir / f'od_flows_{od_kk}.pdf')
         plt.close()
 
     # Plot scatter comparison: three od, od pair comparison
@@ -169,7 +194,7 @@ for emsa in tqdm(range(0, 100)):
     plt.ylabel('OD (Revised)')
     plt.legend()
     plt.tight_layout()
-    plt.savefig('%s\od_comparison_%s.png' % (url_result, od_kk), dpi=500)
+    plt.savefig(result_dir / f'od_comparison_{od_kk}.png', dpi=500)
     plt.close()
 
     # Plot PA changes
@@ -188,7 +213,7 @@ for emsa in tqdm(range(0, 100)):
     replace_maxmin_legend(ax)
     ctx.add_basemap(ax, crs=zones_p.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
     plt.tight_layout()
-    plt.savefig('%s\PA_change_%s.pdf' % (url_result, od_kk))
+    plt.savefig(result_dir / f'PA_change_{od_kk}.pdf')
     plt.close()
 
     # Merge with socio-demo
@@ -203,75 +228,42 @@ for emsa in tqdm(range(0, 100)):
     plt.ylabel('OD Ratio')
     plt.legend()
     plt.tight_layout()
-    plt.savefig('%s\od_with_popdensity_%s.png' % (url_result, od_kk), dpi=500)
+    plt.savefig(result_dir / f'od_with_popdensity_{od_kk}.png', dpi=500)
     plt.close()
 
     ### 3. Plot traffic volume: Raw; Weighted; ODME; AADT ###
-    link_raw = pd.read_csv(url_raw + '\link_performance_s0_25nb.csv', usecols=['link_id', 'volume'])
-    link_raw.columns = ['link_id', 'volume_raw']
-    link_weight = pd.read_csv(url_weight + '\link_performance_s0_25nb.csv', usecols=['link_id', 'volume'])
-    link_weight.columns = ['link_id', 'volume_weight']
-    link_final = pd.read_csv(url_odme + '\link_performance_s0_25nb.csv',
-                             usecols=['link_id', 'ODME_volume_before', 'ODME_volume_after'])
-    link_final.columns = ['link_id', 'volume_before', 'volume_final']
+    link_raw = read_perf(raw_dir, {'volume': 'volume_raw'})
+    link_weight = read_perf(weight_dir, {'volume': 'volume_weight'})
+    link_final = read_perf(odme_dir, {'ODME_volume_before': 'volume_before',
+                                      'ODME_volume_after': 'volume_final'})
     link_flows = reduce(lambda left, right: pd.merge(left, right, on=['link_id'], how='outer'),
                         [link, link_raw, link_weight, link_final])
-    valid_linkss = pd.read_csv(r'F:\MDLD_OD\MDLDod\raw_data\%s\valid_linkss.csv' % msa_name, index_col=0)
+    valid_linkss = pd.read_csv(RAW_DATA_DIR / msa_name / 'valid_linkss.csv', index_col=0)
     link_flows = link_flows.merge(valid_linkss, on='link_id', how='left')
-    link_flows.to_pickle(r'%s\link_flows.pkl' % url_result)
+    link_flows.to_pickle(result_dir / 'link_flows.pkl')
 
     for plt_name in ['volume_raw', 'volume_weight', 'volume_final']:
-        fig, ax = plt.subplots(figsize=(4.5, 4))
-        # plt_name = 'volume_final'
-        binning = mapclassify.NaturalBreaks(link_flows[plt_name], k=4)  # NaturalBreaks
-        link_flows['cut_jenks'] = (binning.yb + 1) * 0.5
-        link_flows[link_flows[plt_name] == 0].plot(ax=ax, alpha=0.3, lw=0.25, color='gray')
-        aadtr = link_flows[link_flows[plt_name] > 0].reset_index(drop=True)
-        aadtr.plot(column=plt_name, cmap='RdYlGn_r', scheme="natural_breaks", k=4, lw=aadtr['cut_jenks'],
-                   ax=ax, alpha=0.4, legend=True,
-                   legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
-        ctx.add_basemap(ax, crs=link_flows.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
-        replace_maxmin_legend(ax)
-        plt.axis('off')
-        plt.tight_layout()
-        plt.savefig('%s\link_volume_%s.pdf' % (url_result, plt_name))
-        plt.close()
+        plot_natural_breaks(link_flows, plt_name, result_dir / f'link_volume_{plt_name}.pdf')
 
     # Plot AADT
-    aadt = pd.read_pickle(r'F:\MDLD_OD\MDLDod\raw_data\%s\all_aadt.pkl' % msa_name)
-    aadt = aadt.to_crs(epsg=5070)
-    fig, ax = plt.subplots(figsize=(4.5, 4))
-    plt_name = 'AADT_hour'
-    binning = mapclassify.NaturalBreaks(aadt[plt_name], k=4)  # NaturalBreaks
-    aadt['cut_jenks'] = (binning.yb + 1) * 0.5
-    aadt[aadt[plt_name] == 0].plot(ax=ax, alpha=0.3, lw=0.25, color='gray')
-    aadtr = aadt[aadt[plt_name] > 0].reset_index(drop=True)
-    aadtr.plot(column=plt_name, cmap='RdYlGn_r', scheme="natural_breaks", k=4, lw=aadtr['cut_jenks'],
-               ax=ax, alpha=0.4, legend=True,
-               legend_kwds={"fmt": "{:.0f}", 'frameon': False, 'ncol': 1, 'loc': 'upper left'})
-    ctx.add_basemap(ax, crs=link_flows.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
-    replace_maxmin_legend(ax)
-    # plt.title(msa_name)
-    plt.axis('off')
-    plt.tight_layout()
-    plt.savefig('%s\link_volume_aadt.pdf' % url_result)
-    plt.close()
+    aadt = pd.read_pickle(RAW_DATA_DIR / msa_name / 'all_aadt.pkl').to_crs(epsg=5070)
+    plot_natural_breaks(aadt, 'AADT_hour', result_dir / 'link_volume_aadt.pdf')
 
     # Plot ODME
     fig, ax = plt.subplots(figsize=(4.5, 4))
     aadt_nn = link_flows[~link_flows['AADT_hour'].isnull()]
-    sns.regplot(data=aadt_nn, x='AADT_hour', y='volume_before', ax=ax, color='#00A08799',
-                scatter_kws={'alpha': 0.5, 's': 10}, label='Before: ' + r'$\rho=$' + str(
-            round(aadt_nn[['volume_before', 'AADT_hour']].corr().values[1][0], 2)))
-    sns.regplot(data=aadt_nn, x='AADT_hour', y='volume_final', ax=ax, color='#E64B3599',
-                scatter_kws={'alpha': 0.5, 's': 10}, label='After: ' + r'$\rho=$' + str(
-            round(aadt_nn[['volume_final', 'AADT_hour']].corr().values[1][0], 2)))
+    for y_col, color, prefix in [('volume_before', '#00A08799', 'Before'),
+                                 ('volume_final', '#E64B3599', 'After')]:
+        rho = round(aadt_nn[[y_col, 'AADT_hour']].corr().values[1][0], 2)
+        sns.regplot(data=aadt_nn, x='AADT_hour', y=y_col, ax=ax, color=color,
+                    label=f'{prefix}: ' + r'$\rho=$' + str(rho),
+                    scatter_kws={'alpha': 0.5, 's': 10})
     ax.plot([0, max(aadt_nn['volume_final'])], [0, max(aadt_nn['volume_final'])], '--', lw=2, color='k')
     plt.xlabel('Ground truth')
     plt.ylabel('Assignment volume')
     plt.legend(loc='upper left')
     plt.tight_layout()
-    plt.savefig(r'%s\volume_before_after.png' % url_result, dpi=500)
+    plt.savefig(result_dir / 'volume_before_after.png', dpi=500)
     plt.close()
 
     # Summary all features: OD difference and Volume accuracy
@@ -295,46 +287,39 @@ for emsa in tqdm(range(0, 100)):
     od_flows['od_final_weight'] = abs(od_flows['od_final'] - od_flows['od_weight']) / od_flows['od_weight']
     all_metric_od.append([emsa, msa_name, msa_id, tt_od_fr, tt_od_fw, tt_od_wr, od_flows['od_final_raw'].mean(),
                           od_flows['od_weight_raw'].mean(), od_flows['od_final_weight'].mean()])
-    od_flows.to_pickle(r'%s\od_flows.pkl' % url_result)
+    od_flows.to_pickle(result_dir / 'od_flows.pkl')
 
 all_metric_od = pd.DataFrame(all_metric_od)
 all_metric_od.columns = ['emsa', 'msa_name', 'msa_id', 'tt_od_fr', 'tt_od_fw', 'tt_od_wr', 'od_final_raw',
                          'od_weight_raw', 'od_final_weight']
-all_metric_od.to_csv(r'F:\MDLD_OD\MDLDod\results_all\all_metric_od.csv')
+all_metric_od.to_csv(RESULTS_ALL_DIR / 'all_metric_od.csv')
 all_metric_v = pd.DataFrame(all_metric_v)
 all_metric_v.columns = ['emsa', 'msa_name', 'msa_id', 'tt_vmt_mape', 'tt_volume_mape', 'l_avg_volume_mape',
                         'l_avg_volume_mae', 'l_volume_corr']
 all_metric_v['case'] = ['volume_raw', 'volume_weight', 'volume_final'] * 100
-all_metric_v.to_csv(r'F:\MDLD_OD\MDLDod\results_all\all_metric_v.csv')
+all_metric_v.to_csv(RESULTS_ALL_DIR / 'all_metric_v.csv')
 
 # # Plot all areas
 all_bound = pd.concat(all_bound, axis=0).reset_index(drop=True)
 all_bound['geometry'] = all_bound['geometry'].apply(wkt.loads)
 all_bound = gpd.GeoDataFrame(all_bound, geometry='geometry', crs="EPSG:4326")
 all_bound = all_bound.to_crs(epsg=5070)
-# all_bound.to_csv(r'F:\MDLD_OD\MDLDod\shp\all_bound.csv')
+# all_bound.to_csv(SHP_DIR / 'all_bound.csv')
 fig, ax = plt.subplots(figsize=(9, 6))
 all_bound.plot(column='pop', ax=ax, alpha=0.7, cmap='coolwarm', scheme="natural_breaks", k=5)
 ctx.add_basemap(ax, crs=all_bound.crs, source=ctx.providers.CartoDB.Positron, alpha=0.9)
 plt.tight_layout()
 plt.axis('off')
-plt.savefig(r'F:\MDLD_OD\MDLDod\results_all\all_bound.pdf')
+plt.savefig(RESULTS_ALL_DIR / 'all_bound.pdf')
 
 # merge with msa features
-all_metric_v_final = all_metric_v[all_metric_v['case'] == 'volume_final']
-all_metric_v_final = all_metric_v_final.merge(msa_pop, left_on='msa_id', right_on='CBSA')
-all_metric_v_final.corr(numeric_only=True)
-fig, ax = plt.subplots(figsize=(9, 6))
-sns.regplot(data=all_metric_v_final, x='CBSA_POP', y='tt_volume_mape', ax=ax, color='#00A08799',
-            scatter_kws={'alpha': 0.5, 's': 50}, label=r'$\rho=$' + str(
-        round(all_metric_v_final[['CBSA_POP', 'tt_volume_mape']].corr().values[1][0], 2)))
-plt.legend(loc='upper left')
-
-all_metric_od_final = all_metric_od.copy()
-all_metric_od_final = all_metric_od_final.merge(msa_pop, left_on='msa_id', right_on='CBSA')
-all_metric_od_final.corr(numeric_only=True)
-fig, ax = plt.subplots(figsize=(9, 6))
-sns.regplot(data=all_metric_od_final, x='CBSA_POP', y='od_final_weight', ax=ax, color='#00A08799',
-            scatter_kws={'alpha': 0.5, 's': 50}, label=r'$\rho=$' + str(
-        round(all_metric_od_final[['CBSA_POP', 'od_final_weight']].corr().values[1][0], 2)))
-plt.legend(loc='upper left')
+all_metric_v_final = all_metric_v[all_metric_v['case'] == 'volume_final'].merge(
+    msa_pop, left_on='msa_id', right_on='CBSA')
+all_metric_od_final = all_metric_od.merge(msa_pop, left_on='msa_id', right_on='CBSA')
+for data, ycol in [(all_metric_v_final, 'tt_volume_mape'),
+                   (all_metric_od_final, 'od_final_weight')]:
+    fig, ax = plt.subplots(figsize=(9, 6))
+    rho = round(data[['CBSA_POP', ycol]].corr().values[1][0], 2)
+    sns.regplot(data=data, x='CBSA_POP', y=ycol, ax=ax, color='#00A08799',
+                scatter_kws={'alpha': 0.5, 's': 50}, label=r'$\rho=$' + str(rho))
+    plt.legend(loc='upper left')
