@@ -79,3 +79,8 @@ Each metro area will generate:
 - DTALite and osm2gmns developers
 - OpenStreetMap for road network
 
+## Result calculation and rerun protocol
+
+Matched FHWA route groups are assigned deterministically to calibration/holdout partitions (seed 42, approximately 20% of route groups held out) before sensor selection. Multiple links/directions of a route stay together. `valid_linkss.csv` and `all_aadt.pkl` record the group, partition and protocol. Routes must have verified Route_ID values, and matched observations must cover both partitions. Sensors and all volume/VMT calibration ratios exclude the holdout; VMT weights compare observed and predicted traffic on the same measured calibration links.
+
+Regenerate inputs and rerun Raw_OD, Weighted_OD and ODME simulations. Each successful DTALite run writes `evaluation_manifest.json` tying its demand, sensors and performance output to the holdout catalog. Legacy or mismatched runs are rejected by the results script. `all_metric_v.csv` exports separate calibration/holdout rows with sample counts. `tt_volume_bias`/`tt_vmt_bias` are signed aggregate biases on matched observed links; `l_avg_volume_mape` remains a mean of absolute link-level percentage errors. Comparison charts and final accuracy summaries use holdout observations.

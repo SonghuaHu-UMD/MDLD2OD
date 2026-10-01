@@ -1,3 +1,4 @@
+from evaluation_protocol import assign_holdout, calibration_weights, write_run_manifest
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -378,6 +379,12 @@ for emsa in range(0, 2):  # 0-5
             valid_links = valid_links[['link_id', 'fhwa_id', 'Route_ID', 'AADT']]
             valid_linkss.append(valid_links)
     valid_linkss = pd.concat(valid_linkss, ignore_index=True)
+    # Assign groups before any sensor selection or calibration.
+    all_aadt = assign_holdout(all_aadt)
+    valid_linkss = valid_linkss.merge(all_aadt[['fhwa_id', 'observation_group', 'evaluation_split', 'evaluation_protocol']],
+                                     on='fhwa_id', validate='many_to_one')
+    if valid_linkss['evaluation_split'].nunique() != 2:
+        raise ValueError('Matched route catalog needs both calibration and holdout coverage')
     link = link.merge(valid_linkss, on=['link_id'], how='left')
     link = link.to_crs('EPSG:4326')
     all_aadt = all_aadt.to_crs('EPSG:4326')
@@ -402,13 +409,13 @@ for emsa in range(0, 2):  # 0-5
     plt.close()
 
     # Generate sensors
-    all_sensor = link[['Route_ID', 'link_type_name', 'from_node_id', 'to_node_id', 'AADT', 'link_id']]
+    all_sensor = link.loc[link['evaluation_split'] == 'calibration', ['Route_ID', 'link_type_name', 'from_node_id', 'to_node_id', 'AADT', 'link_id']]
     all_sensor = all_sensor.dropna(subset='AADT').reset_index(drop=True)
     all_sensor['count'] = all_sensor['AADT'] * p_ratio
     all_sensor = pd.concat([
         all_sensor[all_sensor['link_type_name'].isin(['motorway', 'primary'])],
         all_sensor[all_sensor['link_type_name'].isin(['secondary', 'residential', 'tertiary'])].groupby(
-            'Route_ID').sample(frac=0.5)], axis=0).reset_index(drop=True).reset_index()
+            'Route_ID').sample(frac=0.5, random_state=42)], axis=0).reset_index(drop=True).reset_index()
     all_sensor = all_sensor.drop_duplicates(subset=['link_id']).reset_index(drop=True)
     # print(all_sensor['link_type_name'].value_counts())
     # all_sensor = all_sensor.reset_index(drop=True).reset_index()
@@ -509,22 +516,23 @@ for emsa in range(0, 2):  # 0-5
             run_dir = SIMULATION_DIR / urk_k / msa_name
             output_dta_file(urk_k, n_iter)
             demand_df.to_csv(run_dir / 'demand.csv', index=False)
+            sensor_path = run_dir / 'sensor_data.csv'
             if sensor_df is not None:
-                sensor_df.to_csv(run_dir / 'sensor_data.csv', index=False)
-            os.chdir(run_dir)
-            subprocess.call([str(run_dir / 'DTALite_230915.exe')])
+                sensor_df.to_csv(sensor_path, index=False)
+            else:
+                sensor_path.unlink(missing_ok=True)
+            (run_dir / 'evaluation_manifest.json').unlink(missing_ok=True)
+            (run_dir / 'link_performance_s0_25nb.csv').unlink(missing_ok=True)
+            subprocess.run([str(run_dir / 'DTALite_230915.exe')], cwd=run_dir, check=True)
+            write_run_manifest(run_dir, msa_dir / 'valid_linkss.csv')
             return run_dir
 
 
         def compute_weights(assign_all):
-            """Merge AADT, compute tt_weight / tt_weight1 / mae_l, append to wt_s."""
-            assign_all = assign_all.merge(link[['link_id', 'AADT']], on='link_id', how='left')
-            tt_weight = (((all_aadt['AADT'] * all_aadt['aadt_length']).sum() * p_ratio) /
-                         (assign_all['volume'] * assign_all['distance_km'] * 1000).sum())
-            assign_all_nn = assign_all[~assign_all['AADT'].isnull()]
-            assign_all_nn['mae_l'] = abs(assign_all_nn['AADT'] * p_ratio - assign_all_nn['volume'])
-            tt_weight1 = (assign_all_nn['AADT'].sum() * p_ratio) / assign_all_nn['volume'].sum()
-            wt_s.extend([tt_weight, tt_weight1, assign_all_nn['mae_l'].mean()])
+            """Calibrate on measured links in the calibration partition only."""
+            assign_all = assign_all.merge(link[['link_id', 'AADT', 'evaluation_split']], on='link_id', how='left')
+            tt_weight, tt_weight1, mae = calibration_weights(assign_all, p_ratio)
+            wt_s.extend([tt_weight, tt_weight1, mae])
             return assign_all, tt_weight, tt_weight1
 
 
@@ -555,7 +563,7 @@ for emsa in range(0, 2):  # 0-5
             print('Run DTALite Again to align the total weight!')
             od_flows_w = od_flows_s.copy()
             od_flows_w['volume'] = od_flows_w['volume'] * ((tt_weight1 + tt_weight1) / 2)
-            run_dta(urk_k, od_flows_w, 10)
+            run_dta(urk_k, od_flows_w, 10, sensor_df=all_sensor)
 
         # Output final simulation data for publish
         output_dta_file('Final', 10)
@@ -574,7 +582,7 @@ for emsa in range(0, 2):  # 0-5
         plot_aadt_assign(assign_all, all_aadt, 'ODME')
         assign_all, _, _ = compute_weights(assign_all)
         print(wt_s)
-        pd.DataFrame([wt_s], columns=['VMT_w', 'Avg_w', 'mape_w', 'VMT_ww', 'Avg_ww', 'mae_ww']).to_csv(
+        pd.DataFrame([wt_s], columns=['VMT_w', 'Avg_w', 'mae_w', 'VMT_ww', 'Avg_ww', 'mae_ww']).to_csv(
             odme_dir / 'weights.csv', index=False)
 
         # Plot link performance
@@ -613,7 +621,7 @@ for emsa in range(0, 2):  # 0-5
 
         # Plot ODME
         fig, ax = plt.subplots(figsize=(4.5, 4))
-        aadt_nn = aadt[~aadt['AADT_hour'].isnull()]
+        aadt_nn = aadt[(aadt['evaluation_split'] == 'holdout') & aadt['AADT_hour'].notna()]
         for y_col, color, prefix in [('ODME_volume_before', '#00A08799', 'Before'),
                                      ('ODME_volume_after', '#E64B3599', 'After')]:
             rho = round(aadt_nn[[y_col, 'AADT_hour']].corr().values[1][0], 2)
@@ -621,7 +629,7 @@ for emsa in range(0, 2):  # 0-5
                         label=f'{prefix}: ' + r'$\rho=$' + str(rho),
                         scatter_kws={'alpha': 0.5, 's': 10})
         ax.plot([0, max(aadt_nn['ODME_volume_after'])], [0, max(aadt_nn['ODME_volume_after'])], '--', lw=2, color='k')
-        plt.xlabel('Ground truth')
+        plt.xlabel('Held-out observed volume')
         plt.ylabel('Assignment volume')
         plt.legend(loc='upper left')
         plt.tight_layout()

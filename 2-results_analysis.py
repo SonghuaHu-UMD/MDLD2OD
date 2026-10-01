@@ -1,3 +1,4 @@
+from evaluation_protocol import traffic_metrics, validate_run
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -239,6 +240,10 @@ for emsa in tqdm(range(0, 100)):
     link_flows = reduce(lambda left, right: pd.merge(left, right, on=['link_id'], how='outer'),
                         [link, link_raw, link_weight, link_final])
     valid_linkss = pd.read_csv(RAW_DATA_DIR / msa_name / 'valid_linkss.csv', index_col=0)
+    for directory in [raw_dir, weight_dir, odme_dir]:
+        validate_run(directory, RAW_DATA_DIR / msa_name / 'valid_linkss.csv')
+    if 'evaluation_split' not in valid_linkss:
+        raise ValueError('Missing route-group holdout; regenerate inputs and rerun')
     link_flows = link_flows.merge(valid_linkss, on='link_id', how='left')
     link_flows.to_pickle(result_dir / 'link_flows.pkl')
 
@@ -251,7 +256,7 @@ for emsa in tqdm(range(0, 100)):
 
     # Plot ODME
     fig, ax = plt.subplots(figsize=(4.5, 4))
-    aadt_nn = link_flows[~link_flows['AADT_hour'].isnull()]
+    aadt_nn = link_flows[(link_flows['evaluation_split'] == 'holdout') & link_flows['AADT_hour'].notna()]
     for y_col, color, prefix in [('volume_before', '#00A08799', 'Before'),
                                  ('volume_final', '#E64B3599', 'After')]:
         rho = round(aadt_nn[[y_col, 'AADT_hour']].corr().values[1][0], 2)
@@ -259,7 +264,7 @@ for emsa in tqdm(range(0, 100)):
                     label=f'{prefix}: ' + r'$\rho=$' + str(rho),
                     scatter_kws={'alpha': 0.5, 's': 10})
     ax.plot([0, max(aadt_nn['volume_final'])], [0, max(aadt_nn['volume_final'])], '--', lw=2, color='k')
-    plt.xlabel('Ground truth')
+    plt.xlabel('Held-out observed volume')
     plt.ylabel('Assignment volume')
     plt.legend(loc='upper left')
     plt.tight_layout()
@@ -267,17 +272,13 @@ for emsa in tqdm(range(0, 100)):
     plt.close()
 
     # Summary all features: OD difference and Volume accuracy
-    for each_v in ['volume_raw', 'volume_weight', 'volume_final']:
-        aadt_nn['mae'] = abs(aadt_nn[each_v] - aadt_nn['AADT_hour'])
-        aadt_nn['mape'] = abs(aadt_nn[each_v] - aadt_nn['AADT_hour']) / aadt_nn['AADT_hour']
-        tt_vmt_mape = ((link_flows[each_v] * link_flows['length']).sum() - (
-                aadt['AADT_hour'] * aadt['aadt_length']).sum()) / ((aadt['AADT_hour'] * aadt['aadt_length']).sum())
-        tt_volume_mape = (aadt_nn[each_v].sum() - aadt_nn['AADT_hour'].sum()) / aadt_nn['AADT_hour'].sum()
-        l_avg_volume_mape = aadt_nn['mape'].mean()
-        l_avg_volume_mae = aadt_nn['mae'].mean()
-        l_volume_corr = aadt_nn[[each_v, 'AADT_hour']].corr().values[1][0]
-        all_metric_v.append(
-            [emsa, msa_name, msa_id, tt_vmt_mape, tt_volume_mape, l_avg_volume_mape, l_avg_volume_mae, l_volume_corr])
+    for partition in ['calibration', 'holdout']:
+        measured = link_flows[link_flows['evaluation_split'] == partition]
+        for each_v in ['volume_raw', 'volume_weight', 'volume_final']:
+            metrics = traffic_metrics(measured, each_v)
+            metrics.update(emsa=emsa, msa_name=msa_name, msa_id=msa_id, case=each_v,
+                           evaluation_split=partition, metric_scope='matched_observed_links')
+            all_metric_v.append(metrics)
 
     tt_od_fr = (od_flows['od_final'].sum() - od_flows['od_raw'].sum()) / od_flows['od_raw'].sum()
     tt_od_fw = (od_flows['od_final'].sum() - od_flows['od_weight'].sum()) / od_flows['od_weight'].sum()
@@ -294,9 +295,6 @@ all_metric_od.columns = ['emsa', 'msa_name', 'msa_id', 'tt_od_fr', 'tt_od_fw', '
                          'od_weight_raw', 'od_final_weight']
 all_metric_od.to_csv(RESULTS_ALL_DIR / 'all_metric_od.csv')
 all_metric_v = pd.DataFrame(all_metric_v)
-all_metric_v.columns = ['emsa', 'msa_name', 'msa_id', 'tt_vmt_mape', 'tt_volume_mape', 'l_avg_volume_mape',
-                        'l_avg_volume_mae', 'l_volume_corr']
-all_metric_v['case'] = ['volume_raw', 'volume_weight', 'volume_final'] * 100
 all_metric_v.to_csv(RESULTS_ALL_DIR / 'all_metric_v.csv')
 
 # # Plot all areas
@@ -313,10 +311,10 @@ plt.axis('off')
 plt.savefig(RESULTS_ALL_DIR / 'all_bound.pdf')
 
 # merge with msa features
-all_metric_v_final = all_metric_v[all_metric_v['case'] == 'volume_final'].merge(
+all_metric_v_final = all_metric_v[(all_metric_v['case'] == 'volume_final') & (all_metric_v['evaluation_split'] == 'holdout')].merge(
     msa_pop, left_on='msa_id', right_on='CBSA')
 all_metric_od_final = all_metric_od.merge(msa_pop, left_on='msa_id', right_on='CBSA')
-for data, ycol in [(all_metric_v_final, 'tt_volume_mape'),
+for data, ycol in [(all_metric_v_final, 'tt_volume_bias'),
                    (all_metric_od_final, 'od_final_weight')]:
     fig, ax = plt.subplots(figsize=(9, 6))
     rho = round(data[['CBSA_POP', ycol]].corr().values[1][0], 2)
